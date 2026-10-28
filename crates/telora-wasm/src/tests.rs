@@ -1142,3 +1142,19 @@ fn diagnostic_point(value: &serde_json::Value) -> u64 {
 mod staged_build;
 
 mod column_map;
+
+mod collection_alias;
+mod format_fusion;
+mod literal_pairs;
+mod text_writer;
+
+mod collection_space;
+
+mod collection_cache;
+
+mod collection_summaries;
+
+mod collection_record_probe;
+
+#[cfg(feature = "experimental-mut-oracle")]
+mod collection_mut_oracle;

@@ -83,6 +83,6 @@ pub def verified_case: test::Test = test::should_ok(fn() {
         Some(item) => item.value == 21,
         None => False,
     } && accepts(model::Endpoint.type)
-        && fmt::render(fmt::Display::display(endpoint)) == "localhost:8080";
+        && fmt::render(fmt::Display::fmt(endpoint, fmt::empty())) == "localhost:8080";
     expect(verified)
 });

@@ -9,7 +9,7 @@ type Service = struct {name: String, endpoint: Endpoint, ratio: Float};
 @fmt::display_by("{host}:{port}")
 type Explicit = struct {host: String, port: Int};
 impl fmt::Display for Explicit {
-    display: fn(value) { fmt::concat(["explicit(", ":", ")"], [fmt::from_string(value.host), fmt::from_int(value.port)]) },
+    fmt: fn(value, f) { fmt::write_str(fmt::write_int(fmt::write_str(fmt::write_str(fmt::write_str(f, "explicit("), value.host), ":"), value.port), ")") },
 };
 type Plain = struct {value: Int};
 
@@ -18,7 +18,7 @@ pub def inspect: Fn() -> (String, String, String, String, Array(String), String)
     let explicit: Explicit = {host: "localhost", port: 8080};
     let service: Service = {name: "api", endpoint, ratio: -0.0};
     (fmt::render(fmt::display(Endpoint.type, endpoint)),
-     fmt::render(fmt::Display::display(endpoint)),
+     fmt::render(fmt::Display::fmt(endpoint, fmt::empty())),
      fmt::render(fmt::display(Service.type, service)),
      `endpoint=\{explicit}`,
      match property::get_type_prop(Endpoint.type, fmt::DisplayBy.type) { Some(p) => p.template.fields, None => [] },

@@ -14,12 +14,26 @@ impl Emitter<'_> {
         }
         let node = self.key.node;
         let args = self.mir.types[self.ty(node)?.index()].arguments.clone();
-        let operation = ["from_string", "from_int", "from_float", "concat", "render"]
-            .iter()
-            .position(|&n| n == name)
-            .ok_or_else(|| format!("Wasm: Fmt native not implemented: {name}"))?
-            + 1;
-        let arity = if operation == 4 { 2 } else { 1 };
+        let operation = match name {
+            "make_empty" => 0,
+            "from_string" => 1,
+            "from_int" => 2,
+            "from_float" => 3,
+            "concat" => 4,
+            "render" => 5,
+            "write_str" => 6,
+            "write_int" => 7,
+            "write_float" => 8,
+            "encode_json_string" => 9,
+            "write_fmt" => 10,
+            "encode_json_float" => 11,
+            _ => return Err(format!("Wasm: Fmt native not implemented: {name}")),
+        };
+        let arity = match operation {
+            0 => 0,
+            4 | 6..=11 => 2,
+            _ => 1,
+        };
         if args.len() != arity + 1 {
             return Err("Wasm: Fmt signature arity mismatch".into());
         }
@@ -36,6 +50,15 @@ impl Emitter<'_> {
                 }
         };
         let valid = match operation {
+            0 => is_format(kind(output)),
+            6 | 9 => {
+                is_format(kind(args[0])) && kind(args[1]) == &T::String && is_format(kind(output))
+            }
+            7 => is_format(kind(args[0])) && kind(args[1]) == &T::Int && is_format(kind(output)),
+            8 | 11 => {
+                is_format(kind(args[0])) && kind(args[1]) == &T::Float && is_format(kind(output))
+            }
+            10 => args.iter().all(|&ty| is_format(kind(ty))),
             1 => kind(args[0]) == &T::String && is_format(kind(output)),
             2 => kind(args[0]) == &T::Int && is_format(kind(output)),
             3 => kind(args[0]) == &T::Float && is_format(kind(output)),
@@ -45,6 +68,9 @@ impl Emitter<'_> {
         };
         if !valid {
             return Err("Wasm: Fmt signature types mismatch".into());
+        }
+        if operation == 0 {
+            return self.format_empty(node, output);
         }
         let first = self.parameter(0);
         if operation == 5 {
@@ -56,7 +82,7 @@ impl Emitter<'_> {
             ]);
             return self.format_result(node, output, span, first);
         }
-        let second = if operation == 4 {
+        let second = if arity == 2 {
             self.parameter(1)
         } else {
             self.local(ValType::I32)
@@ -97,8 +123,34 @@ impl Emitter<'_> {
             self.report(node, message, first, count, false);
             self.emit(I::End);
         }
+        if operation == 11 {
+            self.extend([
+                I::LocalGet(second),
+                I::I64Load(memory(DATA, 3)),
+                I::F64ReinterpretI64,
+                I::F64Abs,
+                I::F64Const(f64::MAX.into()),
+                I::F64Le,
+                I::I32Eqz,
+                I::If(BlockType::Empty),
+            ]);
+            let message = self.text_as(
+                node,
+                self.string_type()?,
+                b"JSON cannot encode a non-finite Float",
+            )?;
+            let count = self.local(ValType::I32);
+            self.extend([I::I32Const(1), I::LocalSet(count)]);
+            self.report(node, message, second, count, false);
+            self.emit(I::End);
+        }
         // Deferred nodes own plain operands after their caller's frame ends.
         let first = self.escape_plain(first, args[0])?;
+        let second = if arity == 2 {
+            self.escape_plain(second, args[1])?
+        } else {
+            second
+        };
         let data = self.alloc(20);
         self.store32(data, 0, operation as u32);
         for (offset, value) in [(4, first), (8, second)] {
@@ -125,7 +177,23 @@ impl Emitter<'_> {
         Ok(result)
     }
 
-    fn format_result(
+    pub(super) fn format_empty(&mut self, node: HirId, output: TypeId) -> Result<u32, String> {
+        let data = self.alloc(20);
+        for offset in [0, 4, 8, 12, 16] {
+            self.store32(data, offset, 0);
+        }
+        let id = self.table_push(FORMATS, data, 20, None)?;
+        let result = self.value_as(node, output, SCALAR_BYTES)?;
+        self.extend([
+            I::LocalGet(result),
+            I::LocalGet(id),
+            I::I64ExtendI32U,
+            I::I64Store(memory(DATA, 3)),
+        ]);
+        Ok(result)
+    }
+
+    pub(super) fn format_result(
         &mut self,
         node: HirId,
         string: TypeId,
@@ -158,21 +226,40 @@ impl Emitter<'_> {
             .ok()
             .and_then(|n| n.checked_mul(8))
             .ok_or("Wasm: interpolation too large")?;
+        // An unknown/custom Fmt anywhere keeps the entire original path, including
+        // recursion failure subjects and Display evaluation/diagnostic order.
+        let primitives_only = children.iter().all(|edge| {
+            self.effective_ty(edge.node)
+                .is_ok_and(|ty| self.mir.types[ty.index()].constructor == T::String)
+                || self.primitive_format_input(edge.node).is_some()
+        });
         let parts = self.alloc(bytes);
         let mut subject = None;
         for (index, edge) in children.iter().enumerate() {
             if edge.role != Role::Part {
                 return Err("Wasm: invalid interpolation edge".into());
             }
-            let kind = &self.mir.types[self.effective_ty(edge.node)?.index()].constructor;
-            let operation = if *kind == T::String {
-                1
-            } else if is_format(kind) {
-                2
+            let primitive = primitives_only
+                .then(|| self.primitive_format_input(edge.node))
+                .flatten();
+            let (operation, value) = if let Some((operation, input, callee)) = primitive {
+                (
+                    operation,
+                    self.primitive_format_value(edge.node, input, callee)?,
+                )
             } else {
-                return Err("Wasm: interpolation part lacks sealed String/Fmt conversion".into());
+                let kind = &self.mir.types[self.effective_ty(edge.node)?.index()].constructor;
+                let operation = if *kind == T::String {
+                    1
+                } else if is_format(kind) {
+                    2
+                } else {
+                    return Err(
+                        "Wasm: interpolation part lacks sealed String/Fmt conversion".into(),
+                    );
+                };
+                (operation, self.expression(edge.node)?)
             };
-            let value = self.expression(edge.node)?;
             subject = Some(value);
             self.store32(parts, index as u64 * 8, operation);
             self.extend([

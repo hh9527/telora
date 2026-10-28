@@ -1,0 +1,21 @@
+use std::fmt as fmt;
+use std::array as array;
+use std::codec as codec;
+use std::json as json;
+# All node layouts are retained in a global across GC and snapshot relocation.
+def initial: fmt::Fmt = fmt::encode_json_float(
+    fmt::write_fmt(fmt::encode_json_string(
+        fmt::write_float(fmt::write_int(fmt::write_str(fmt::empty(), "prefix"), 7), -0.0), "é\n\""),
+        fmt::from_string("/")), 0.125);
+pub def answer: Fn(Array(Int), String) -> (Array(String), Array(Bool)) = fn(xs, text) {
+    let prefix = fmt::write_str(fmt::empty(), "p:");
+    let left = array::fold(xs, prefix, fn(f, x) { fmt::write_int(f, x) });
+    let right = array::fold(xs, prefix, fn(f, x) { fmt::write_int(f, x) });
+    let quoted = fmt::encode_json_string(fmt::empty(), text);
+    ([fmt::render(initial), fmt::render(prefix), fmt::render(left), fmt::render(right),
+      fmt::render(fmt::write_str(prefix, "fork")), fmt::render(quoted)],
+     [left == right, left == prefix,
+      fmt::write_float(prefix, -0.0) == fmt::write_float(prefix, 0.0),
+      fmt::render(quoted) == json::stringify(codec::encode(text)),
+      fmt::render(fmt::empty()) == ""])
+};

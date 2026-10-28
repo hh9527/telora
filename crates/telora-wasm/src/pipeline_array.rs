@@ -38,6 +38,54 @@ impl Emitter<'_> {
         self.copy(outer, 0, object, self.width(state)?);
         self.array_result(storage, outer, one, self.width(state)?)
     }
+    // Trusted private builder state owns this header and backing store.
+    // Initial inputs were copied; finish seals before publishing an immutable view.
+    pub(super) fn private_array_publish(
+        &mut self,
+        entries: u32,
+        data: u32,
+        count: u32,
+        capacity: u32,
+        element: TypeId,
+    ) -> Result<(), String> {
+        self.extend([
+            I::LocalGet(entries),
+            I::I32Load(memory(DATA + 12, 2)),
+            I::I32Const(ARRAY_SLICE as i32),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+        ]);
+        let object = self.read32(entries, DATA);
+        for (offset, value) in [(4, data), (8, count), (12, capacity)] {
+            self.extend([
+                I::LocalGet(object),
+                I::LocalGet(value),
+                I::I32Store(memory(offset, 2)),
+            ]);
+        }
+        self.extend([
+            I::LocalGet(entries),
+            I::LocalGet(count),
+            I::I32Store(memory(DATA + 8, 2)),
+            I::Else,
+        ]);
+        self.root_array_prefix(data, element, count)?;
+        let object = self.array_object(data, count, capacity, element)?;
+        self.extend([
+            I::LocalGet(entries),
+            I::LocalGet(object),
+            I::I32Store(memory(DATA, 2)),
+        ]);
+        self.store32(entries, DATA + 4, 0);
+        self.extend([
+            I::LocalGet(entries),
+            I::LocalGet(count),
+            I::I32Store(memory(DATA + 8, 2)),
+        ]);
+        self.store32(entries, DATA + 12, ARRAY_SLICE);
+        self.emit(I::End);
+        Ok(())
+    }
     pub(super) fn pipeline_array_native(
         &mut self,
         name: &str,
@@ -75,9 +123,20 @@ impl Emitter<'_> {
         self.extend([I::LocalGet(stored), I::LocalSet(capacity), I::End]);
         let item = self.parameter(1);
         self.sequence_append(data, count, capacity, element, item)?;
-        let grown =
-            self.array_result_with_capacity(result, data, count, capacity, self.width(element)?)?;
-        self.copy(entries, 0, grown, self.width(result)?);
+        if name == "oracle_push"
+            || std::env::var_os("TELORA_EXPERIMENTAL_PRIVATE_BUILDERS").is_some()
+        {
+            self.private_array_publish(entries, data, count, capacity, element)?;
+        } else {
+            let grown = self.array_result_with_capacity(
+                result,
+                data,
+                count,
+                capacity,
+                self.width(element)?,
+            )?;
+            self.copy(entries, 0, grown, self.width(result)?);
+        }
         self.scalar_as(self.key.node, output, 1)
     }
 }

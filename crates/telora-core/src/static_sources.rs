@@ -1,7 +1,25 @@
 //! Embedded source inventory only: no native functions, types, Engine or VM.
+// The handwritten mutable oracle must not exist in a normal compiler's stdlib.
+#[cfg(feature = "experimental-mut-oracle")]
+const PIPELINE_SOURCE: &str = concat!(
+    include_str!("../modules/std/pipeline.telora"),
+    "\n",
+    include_str!("../modules/std/_pipeline_mut_oracle.telora"),
+);
+#[cfg(not(feature = "experimental-mut-oracle"))]
+const PIPELINE_SOURCE: &str = include_str!("../modules/std/pipeline.telora");
+
+macro_rules! embedded_source {
+    ("pipeline") => {
+        PIPELINE_SOURCE
+    };
+    ($file:literal) => {
+        include_str!(concat!("../modules/std/", $file, ".telora"))
+    };
+}
 macro_rules! sources {
-    ($($name:literal => $file:literal),* $(,)?) => { &[$(($name,
-        include_str!(concat!("../modules/std/", $file, ".telora")))),*] };
+    ($($name:literal => $file:tt),* $(,)?) => { &[$(($name,
+        embedded_source!($file))),*] };
 }
 pub const BUILTINS: &[(&str, &str)] = sources![
     "std" => "lib",
@@ -111,4 +129,20 @@ pub fn native_module(name: &str) -> Option<crate::mir::NativeModule> {
         _ => return None,
     };
     Some(NativeModule { id, types })
+}
+
+#[cfg(test)]
+mod feature_tests {
+    #[test]
+    fn mutable_oracle_is_only_embedded_when_explicitly_enabled() {
+        let pipeline = super::BUILTINS
+            .iter()
+            .find(|(name, _)| *name == "std/pipeline")
+            .unwrap()
+            .1;
+        assert_eq!(
+            pipeline.contains("pub use self::{alias_probe_collect}"),
+            cfg!(feature = "experimental-mut-oracle")
+        );
+    }
 }

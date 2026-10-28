@@ -12,11 +12,12 @@ type Service = struct {name: String, endpoint: Endpoint, ratio: Float};
 @fmt::display_by("{host}:{port}")
 type ExplicitEndpoint = struct {host: String, port: Int};
 impl fmt::Display for ExplicitEndpoint {
-    display: fn(self) {
-        fmt::concat(
-            ["explicit(", ":", ")"],
-            [fmt::from_string(self.host), fmt::from_int(self.port)],
-        )
+    fmt: fn(self, f) {
+        let f = fmt::write_str(f, "explicit(");
+        let f = fmt::write_str(f, self.host);
+        let f = fmt::write_str(f, ":");
+        let f = fmt::write_int(f, self.port);
+        fmt::write_str(f, ")")
     },
 };
 
@@ -33,7 +34,7 @@ pub def verified_case: test::Test = test::should_ok(fn() {
             None => False,
         };
         fmt::render(fmt::display((Endpoint).type, endpoint)) == "localhost:8080"
-            && fmt::render(fmt::Display::display(endpoint)) == "localhost:8080"
+            && fmt::render(fmt::Display::fmt(endpoint, fmt::empty())) == "localhost:8080"
             && fmt::render(fmt::display((Service).type, service))
                 == "api@localhost:8080 {ready} -0 api"
             && `endpoint=\{explicit}` == "endpoint=explicit(localhost:8080)"
@@ -44,4 +45,20 @@ pub def verified_case: test::Test = test::should_ok(fn() {
             }
     };
     expect(verified)
+});
+
+
+pub def accumulator_versions: test::Test = test::should_ok(fn() {
+    let a = fmt::write_str(fmt::empty(), "item=");
+    let b = fmt::write_int(a, 12);
+    let c = fmt::write_str(a, "other");
+    expect(fmt::render(a) == "item=" && fmt::render(b) == "item=12"
+        && fmt::render(c) == "item=other" && fmt::to_string(12) == "12")
+});
+pub def json_string_literal: test::Test = test::should_ok(fn() {
+    expect(fmt::render(fmt::encode_json_string(fmt::empty(), "a\n\"\\é")) == "\"a\\n\\\"\\\\é\"")
+});
+pub def float_writes: test::Test = test::should_ok(fn() {
+    expect(fmt::render(fmt::write_float(fmt::empty(), -0.0)) == "-0"
+        && fmt::render(fmt::encode_json_float(fmt::empty(), 0.125)) == "0.125")
 });

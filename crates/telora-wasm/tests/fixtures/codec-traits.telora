@@ -26,7 +26,7 @@ impl codec::Decode for Manual {
 type ExplicitDisplay = struct { value: Int };
 
 impl fmt::Display for ExplicitDisplay {
-    display: fn(value) { fmt::from_int(value.value) },
+    fmt: fn(value, f) { fmt::write_int(f, value.value) },
 };
 
 pub def answer: Fn() -> Bool = fn() {

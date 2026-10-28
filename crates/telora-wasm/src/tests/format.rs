@@ -127,3 +127,147 @@ fn format_nodes_and_interpolation_use_fixed_rust_rt_operations() {
         ["left", "right"]
     );
 }
+
+#[test]
+fn format_accumulator_preserves_versions_long_chains_and_gc_edges() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/format-accumulator.telora"
+    ))
+    .unwrap();
+    let bytes = compile(&source).unwrap();
+    let mut session = crate::session::Session::load(&bytes, 10_000_000_000).unwrap();
+    session
+        .configure_gc(crate::gc::GcConfig {
+            allocation_interval: 128,
+            heap_limit: 64 * 1024 * 1024,
+        })
+        .unwrap();
+    session.initialize().unwrap();
+    let xs: Vec<i64> = (0..2048).map(|x| x % 10).collect();
+    let expected = format!("p:{}", "0123456789".repeat(204) + "01234567");
+    for text in ["", "é🦀\n\t\r\0\u{001f}\"\\"] {
+        let result = session
+            .call(&[serde_json::json!(xs), serde_json::json!(text)])
+            .unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!([
+                [
+                    "prefix7-0\"é\\n\\\"\"/0.125",
+                    "p:",
+                    expected,
+                    expected,
+                    "p:fork",
+                    serde_json::to_string(text).unwrap()
+                ],
+                [true, false, false, true, true]
+            ])
+        );
+        session.collect_garbage().unwrap();
+    }
+}
+
+#[test]
+fn staged_fmt_accumulator_restores_every_operand_layout() {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/format-accumulator.telora"
+    ))
+    .unwrap();
+    let source = source.replace("pub def answer:", "def inspect:")
+        + r#"
+use std::build as build;
+pub def answer: Fn() -> String = build::stage(
+    fn() { {runtime: initial, information: {}} },
+    fn(f) { fn() { fmt::render(f) } }
+);
+"#;
+    let mir = graph(&source);
+    let symbol = *mir
+        .exports
+        .iter()
+        .flatten()
+        .find(|id| mir.symbols[id.index()].name == "answer")
+        .unwrap();
+    let bytes = crate::staged_build::StagedBuild::compile(&mir.seal_export(symbol).unwrap())
+        .unwrap()
+        .publish(100_000_000, 64 * 1024 * 1024)
+        .unwrap();
+    let mut session = crate::staged_build::load(&bytes, 100_000_000, 64 * 1024 * 1024).unwrap();
+    session.collect_garbage().unwrap();
+    assert_eq!(
+        session.call(&[]).unwrap(),
+        serde_json::json!("prefix7-0\"é\\n\\\"\"/0.125")
+    );
+}
+
+#[test]
+fn format_float_abi_checks_json_without_restricting_display() {
+    // Language arithmetic already rejects nonfinite results. Inject values at
+    // the native ABI boundary to exercise the JSON writer's defensive guard.
+    for json in [false, true] {
+        let operation = if json {
+            "encode_json_float"
+        } else {
+            "write_float"
+        };
+        let bytes = compile(&format!("use std::fmt as fmt; pub def answer: Fn(Float) -> String = fn(v) {{fmt::render(fmt::{operation}(fmt::empty(),v))}};")).unwrap();
+        for (number, text) in [
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "inf"),
+            (f64::NEG_INFINITY, "-inf"),
+        ] {
+            let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+            session.initialize().unwrap();
+            let entry = crate::transport::Value {
+                pointer: session.entry().unwrap(),
+                ty: session.manifest.entry_type,
+            };
+            let ty = session.manifest.types[entry.ty as usize].arguments[0];
+            let input = session.input_value(ty, &serde_json::json!(0.0)).unwrap();
+            session
+                .memory
+                .write(
+                    &mut session.store,
+                    input.pointer as usize + crate::abi::DATA as usize,
+                    &number.to_le_bytes(),
+                )
+                .unwrap();
+            let result = session.invoke_values(entry, &[input]);
+            if json {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .contains("JSON cannot encode a non-finite Float")
+                );
+            } else {
+                assert_eq!(
+                    session.output_value(result.unwrap()).unwrap(),
+                    serde_json::json!(text)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn format_float_writes_compose_inside_boolean_conditions() {
+    for expression in [
+        "fmt::render(fmt::write_float(fmt::empty(), -0.0)) == \"-0\"",
+        "fmt::render(fmt::encode_json_float(fmt::empty(), 0.125)) == \"0.125\"",
+        "fmt::render(fmt::write_float(fmt::empty(), -0.0)) == \"-0\" && fmt::render(fmt::encode_json_float(fmt::empty(), 0.125)) == \"0.125\"",
+    ] {
+        let bytes = compile(&format!(
+            "use std::fmt as fmt; pub def answer: Fn() -> Bool = fn() {{{expression}}};"
+        ))
+        .unwrap();
+        let mut session = crate::session::Session::load(&bytes, 100_000_000).unwrap();
+        session.initialize().unwrap();
+        let result = session.call(&[]);
+        assert_eq!(
+            result.unwrap_or_else(|e| panic!("{expression}: {e}")),
+            serde_json::json!(true)
+        );
+    }
+}

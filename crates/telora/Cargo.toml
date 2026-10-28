@@ -27,3 +27,8 @@ tempfile = "3"
 [dev-dependencies]
 url = "2"
 wasmparser = "0.259"
+
+[features]
+default = []
+# Unsafe experimental surface for handwritten mutable performance oracles only.
+experimental-mut-oracle = ["telora-core/experimental-mut-oracle", "telora-wasm/experimental-mut-oracle"]

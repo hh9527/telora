@@ -12,3 +12,7 @@ wasmparser = "0.259"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wasmi = "2"
+
+[features]
+default = []
+experimental-mut-oracle = ["telora-core/experimental-mut-oracle"]

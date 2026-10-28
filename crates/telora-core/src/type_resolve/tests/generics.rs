@@ -1195,8 +1195,9 @@ fn higher_order_native_calls_use_only_their_declared_generic_signature() {
             "std/fmt",
             r#"
         type Fmt = struct(String);
-        trait Display { display: Fn(Self) -> Fmt };
-        impl Display for Int { display: fn(value) { Fmt("int") } };
+        trait Display { fmt: Fn(Self, Fmt) -> Fmt };
+        pub def empty: Fn() -> Fmt = fn() { Fmt("") };
+        impl Display for Int { fmt: fn(value, f) { Fmt("int") } };
         pub use self::{ Display };
     "#,
         ),

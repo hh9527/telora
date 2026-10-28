@@ -3,7 +3,7 @@ use std::value::{ Value };
 
 type State = enum { Ready };
 impl fmt::Display for State {
-    display: fn(value) { match value { State::Ready => fmt::from_string("ready") } },
+    fmt: fn(value, f) { match value { State::Ready => fmt::write_str(f, "ready") } },
 };
 type Wrapper(T) = struct { value: T };
 trait Render { render: Fn(Self) -> String };

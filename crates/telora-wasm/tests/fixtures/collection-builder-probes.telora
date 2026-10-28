@@ -1,0 +1,168 @@
+# Appended to trusted std::pipeline only by the experimental Rust test harness.
+use std::seq as alias_seq;
+
+pub def alias_bench_array:Fn(Array(Int))->Array(Int)=fn(items){
+ let output=create_mut_builder(array_plan([].ty!(Array(Int))));
+ let ignored=arrays::fold(items,False,fn(previous,item){extend(output,item)});
+ finish(output)
+};
+pub def alias_seq_map:for(P) Fn(alias_seq::Seq(Int,P),Fn(Int)->Int)->Map(Int,Int)=fn(source,key){
+ let output=create_mut_builder(map_plan(maps::empty().ty!(Map(Int,Int))));
+ let ignored=alias_seq::fold(source,False,fn(previous,item){extend(output,merge_update(key(item),item))});
+ finish(output)
+};
+pub def alias_seq_string:for(P) Fn(alias_seq::Seq(Int,P))->String=fn(source){
+ let output=string_mut();
+ let ignored=alias_seq::fold(source,False,fn(previous,item){
+  extend(output.chunks,if item%2==0 {"abcdefgh"}else{"ABCDEFGH"})
+ });
+ string_finish(output)
+};
+pub def alias_seq_mixed:for(P) Fn(alias_seq::Seq(Int,P))->(Map(Int,Int),Array(Int),String)=fn(source){
+ let map=create_mut_builder(map_plan(maps::empty().ty!(Map(Int,Int))));
+ let array=create_mut_builder(array_plan([].ty!(Array(Int))));
+ let text=string_mut();
+ let ignored=alias_seq::fold(source,False,fn(previous,item){
+  let a=extend(map,merge_update(item%64,item));
+  let b=extend(array,item);
+  extend(text.chunks,if item%2==0 {"abcdefgh"}else{"ABCDEFGH"})
+ });
+ (finish(map),finish(array),string_finish(text))
+};
+pub def alias_seq_distinct:for(P) Fn(alias_seq::Seq(Int,P))->Array(Int)=fn(source){
+ let seen=create_mut_builder(dict_plan({}.ty!(Dict(Bool))));
+ let output=create_mut_builder(array_plan([].ty!(Array(Int))));
+ let ignored=alias_seq::fold(source,False,fn(previous,item){
+  extend(seen,merge_thunk(`key\{item%64}`,fn(){extend(output,item)}))
+ });
+ let closed=finish(seen);
+ finish(output)
+};
+
+native alias_map_array:Fn(MutBuilder(Int,Array(Int),ArrayMut(Int)),Fn(Int)->Int)->Bool;
+native alias_filter_array:Fn(MutBuilder(Int,Array(Int),ArrayMut(Int)),Fn(Int)->Bool)->Bool;
+native alias_filtermap_array:Fn(MutBuilder(Int,Array(Int),ArrayMut(Int)),Fn(Int)->Option(Int))->Bool;
+pub def alias_owned_steps:Fn(Array(Int),Fn(Int)->Int,Fn(Int)->Bool,Fn(Int)->Int)->Array(Int)=fn(initial,map1,keep,map2){
+ let output=create_mut_builder(array_plan(initial));
+ let a=alias_map_array(output,map1);
+ let b=alias_filter_array(output,keep);
+ let c=alias_map_array(output,map2);
+ finish(output)
+};
+pub def alias_owned_chain:Fn(Array(Int))->Array(Int)=fn(initial){
+ alias_owned_steps(initial,fn(x){x+1},fn(x){x%3!=0},fn(x){x*2})
+};
+pub def alias_owned_filtermap:Fn(Array(Int),Fn(Int)->Option(Int))->Array(Int)=fn(initial,callback){
+ let output=create_mut_builder(array_plan(initial));
+ let ignored=alias_filtermap_array(output,callback);
+ finish(output)
+};
+# A lazily evaluated fused source, retaining the existing Node/Run/cache contract.
+# Its callbacks are deliberately fixed and total in the controlled experiment.
+pub def alias_fused_node:Fn(Array(Int))->Node(Int)=fn(items){
+ node(fn(run){alias_seq::collect(alias_seq::map(alias_seq::filter(alias_seq::map(
+  alias_seq::from_array(items),fn(x){x+1}),fn(x){x%3!=0}),fn(x){x*2}))})
+};
+# Closed scalar callbacks: no capture, cache, escaping reference or diagnostics.
+# This oracle isolates the value of a future no-escape summary, not its proof.
+native alias_map_array_noescape:Fn(MutBuilder(Int,Array(Int),ArrayMut(Int)),Fn(Int)->Int)->Bool;
+native alias_filter_array_noescape:Fn(MutBuilder(Int,Array(Int),ArrayMut(Int)),Fn(Int)->Bool)->Bool;
+pub def alias_owned_chain_noescape:Fn(Array(Int))->Array(Int)=fn(initial){
+ let output=create_mut_builder(array_plan(initial));
+ let a=alias_map_array_noescape(output,fn(x){x+1});
+ let b=alias_filter_array_noescape(output,fn(x){x%3!=0});
+ let c=alias_map_array_noescape(output,fn(x){x*2});
+ finish(output)
+};
+pub def alias_update_initial:Fn(Map(Int,Int),Array(Int))->Map(Int,Int)=fn(initial,items){
+ let output=create_mut_builder(map_plan(initial));
+ let ignored=arrays::fold(items,False,fn(previous,item){extend(output,merge_update(item,item*10))});
+ finish(output)
+};
+pub def alias_append_initial:Fn(Array(Int),Array(Int))->Array(Int)=fn(initial,items){
+ let output=create_mut_builder(array_plan(initial));
+ let ignored=arrays::fold(items,False,fn(previous,item){extend(output,item)});
+ finish(output)
+};
+pub def alias_string_initial:Fn(String,Array(Int))->String=fn(initial,items){
+ let output={chunks:create_mut_builder(array_plan([initial]))}.ty!(StringMut);
+ let ignored=arrays::fold(items,False,fn(previous,item){extend(output.chunks,"abcdefgh")});
+ string_finish(output)
+};
+# Identical callback/helper bodies for conservative and summary-selected paths.
+def alias_scalar_add:Fn(Int)->Int=fn(x){x+1};
+def alias_scalar_adjust:Fn(Int)->Int=fn(x){alias_scalar_add(x)};
+def alias_scalar_keep:Fn(Int)->Bool=fn(x){x%3!=0};
+def alias_scalar_double:Fn(Int)->Int=fn(x){x*2};
+native alias_map_array_checked:Fn(MutBuilder(Int,Array(Int),ArrayMut(Int)),Fn(Int)->Int)->Bool;
+native alias_filter_array_checked:Fn(MutBuilder(Int,Array(Int),ArrayMut(Int)),Fn(Int)->Bool)->Bool;
+pub def alias_owned_wrapped_chain:Fn(Array(Int))->Array(Int)=fn(initial){
+ let output=create_mut_builder(array_plan(initial));
+ let a=alias_map_array(output,fn(x){alias_scalar_adjust(x)});
+ let b=alias_filter_array(output,fn(x){alias_scalar_keep(x)});
+ let c=alias_map_array(output,fn(x){alias_scalar_double(x)});
+ finish(output)
+};
+pub def alias_owned_checked_chain:Fn(Array(Int))->Array(Int)=fn(initial){
+ let output=create_mut_builder(array_plan(initial));
+ let a=alias_map_array_checked(output,fn(x){alias_scalar_adjust(x)});
+ let b=alias_filter_array_checked(output,fn(x){alias_scalar_keep(x)});
+ let c=alias_map_array_checked(output,fn(x){alias_scalar_double(x)});
+ finish(output)
+};
+pub def alias_owned_checked_dynamic:Fn(Array(Int),Fn(Int)->Int)->Array(Int)=fn(initial,callback){
+ let output=create_mut_builder(array_plan(initial));
+ let a=alias_map_array_checked(output,callback);
+ finish(output)
+};
+pub def alias_owned_checked_debug:Fn(Array(Int))->Array(Int)=fn(initial){
+ let output=create_mut_builder(array_plan(initial));
+ let a=alias_map_array_checked(output,fn(x){dbg!(x)});
+ finish(output)
+};
+type AliasCaptureConfig=struct {offset:Int,divisor:Int};
+def alias_scalar_add_offset:Fn(Int,Int)->Int=fn(offset,x){x+offset};
+pub def alias_owned_captured_conservative:Fn(Array(Int),Int)->Array(Int)=fn(initial,offset){
+ let config={offset:offset,divisor:3}.ty!(AliasCaptureConfig);
+ let output=create_mut_builder(array_plan(initial));
+ let a=alias_map_array(output,fn(x){alias_scalar_add_offset(config.offset,x)});
+ let b=alias_filter_array(output,fn(x){x%config.divisor!=0});
+ let c=alias_map_array(output,fn(x){alias_scalar_double(x)});
+ finish(output)
+};
+pub def alias_owned_captured_checked:Fn(Array(Int),Int)->Array(Int)=fn(initial,offset){
+ let config={offset:offset,divisor:3}.ty!(AliasCaptureConfig);
+ let output=create_mut_builder(array_plan(initial));
+ let a=alias_map_array_checked(output,fn(x){alias_scalar_add_offset(config.offset,x)});
+ let b=alias_filter_array_checked(output,fn(x){x%config.divisor!=0});
+ let c=alias_map_array_checked(output,fn(x){alias_scalar_double(x)});
+ finish(output)
+};
+# Generic compaction experiment: callback returns Bool, retained records retain
+# their original immutable child values. Mapping still remains Int-only.
+pub type AliasProbeRow=struct {key:Int,label:String,score:Int,trail:Array(Int)};
+type AliasRecordConfig=struct {minimum:Int};
+def alias_record_keep:Fn(AliasProbeRow,Int)->Bool=fn(row,minimum){row.score%3!=0&&row.key>=minimum};
+native alias_filter_array_generic:for(A) Fn(MutBuilder(A,Array(A),ArrayMut(A)),Fn(A)->Bool)->Bool;
+native alias_filter_array_generic_checked:for(A) Fn(MutBuilder(A,Array(A),ArrayMut(A)),Fn(A)->Bool)->Bool;
+pub def alias_filter_records_conservative:Fn(Array(AliasProbeRow))->Array(AliasProbeRow)=fn(initial){
+ let config={minimum:0}.ty!(AliasRecordConfig);
+ let output=create_mut_builder(array_plan(initial));
+ let ignored=alias_filter_array_generic(output,fn(row){alias_record_keep(row,config.minimum)});
+ finish(output)
+};
+pub def alias_filter_records_checked:Fn(Array(AliasProbeRow))->Array(AliasProbeRow)=fn(initial){
+ let config={minimum:0}.ty!(AliasRecordConfig);
+ let output=create_mut_builder(array_plan(initial));
+ let ignored=alias_filter_array_generic_checked(output,fn(row){alias_record_keep(row,config.minimum)});
+ finish(output)
+};
+pub def alias_filter_records_debug:Fn(Array(AliasProbeRow))->Array(AliasProbeRow)=fn(initial){
+ let output=create_mut_builder(array_plan(initial));
+ let ignored=alias_filter_array_generic_checked(output,fn(row){let noted=dbg!(row);alias_record_keep(row,0)});
+ finish(output)
+};
+pub def alias_filter_records_standard:Fn(Array(AliasProbeRow))->Array(AliasProbeRow)=fn(initial){
+ let config={minimum:0}.ty!(AliasRecordConfig);
+ arrays::filter(initial,fn(row){alias_record_keep(row,config.minimum)})
+};

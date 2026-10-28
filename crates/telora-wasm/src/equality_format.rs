@@ -5,6 +5,7 @@ use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
     pub fn compare_format(&mut self, ty: TypeId) -> Result<(), String> {
+        self.emit(I::Loop(BlockType::Empty));
         let left = self.table_data(FORMATS, 0, DATA);
         let right = self.table_data(FORMATS, 1, DATA);
         self.extend([
@@ -24,6 +25,63 @@ impl Emitter<'_> {
             I::I32Ne,
         ]);
         self.unequal_if();
+        self.extend([
+            I::LocalGet(operation),
+            I::I32Eqz,
+            I::If(BlockType::Empty),
+            I::I32Const(1),
+            I::Return,
+            I::End,
+        ]);
+        self.extend([
+            I::LocalGet(operation),
+            I::I32Const(6),
+            I::I32GeU,
+            I::If(BlockType::Empty),
+        ]);
+        let second_a = self.read32(left, 8);
+        let second_b = self.read32(right, 8);
+        self.extend([
+            I::LocalGet(operation),
+            I::I32Const(6),
+            I::I32Eq,
+            I::LocalGet(operation),
+            I::I32Const(9),
+            I::I32Eq,
+            I::I32Or,
+            I::If(BlockType::Empty),
+            I::LocalGet(second_a),
+            I::LocalGet(second_b),
+            I::Call(STRING_COMPARE),
+        ]);
+        self.unequal_if();
+        self.extend([
+            I::Else,
+            I::LocalGet(operation),
+            I::I32Const(10),
+            I::I32Eq,
+            I::If(BlockType::Empty),
+        ]);
+        self.compare_call(ty, second_a, second_b)?;
+        self.emit(I::I32Eqz);
+        self.unequal_if();
+        self.emit(I::Else);
+        self.bits(second_a);
+        self.bits(second_b);
+        self.emit(I::I64Ne);
+        self.unequal_if();
+        self.extend([
+            I::End,
+            I::End,
+            I::LocalGet(left),
+            I::I32Load(memory(4, 2)),
+            I::LocalSet(0),
+            I::LocalGet(right),
+            I::I32Load(memory(4, 2)),
+            I::LocalSet(1),
+            I::Br(1),
+            I::End,
+        ]);
         let a = self.read32(left, 4);
         let b = self.read32(right, 4);
         self.extend([
@@ -110,6 +168,9 @@ impl Emitter<'_> {
             I::End,
             I::End,
             I::I32Const(1),
+            I::Return,
+            I::End,
+            I::Unreachable,
         ]);
         Ok(())
     }

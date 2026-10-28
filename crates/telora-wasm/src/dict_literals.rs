@@ -4,7 +4,7 @@ use telora_core::mir::{HirId, HirKind, Role, TypeConstructor as T, TypeId};
 use wasm_encoder::{BlockType, Instruction as I, ValType};
 
 impl Emitter<'_> {
-    fn literal_dict_part(
+    pub(crate) fn literal_dict_part(
         &mut self,
         node: HirId,
         ty: TypeId,

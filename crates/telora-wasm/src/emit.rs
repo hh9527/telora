@@ -519,6 +519,14 @@ impl<'a> Emitter<'a> {
                         current = child(self.mir, current, Role::Left)?;
                     }
                     HirKind::Call => {
+                        if let Some(value) = self.format_render_call(current)? {
+                            prepared = Some(value);
+                            break;
+                        }
+                        if let Some(value) = self.literal_pairs_call(current)? {
+                            prepared = Some(value);
+                            break;
+                        }
                         let arguments = self.call_arguments(current)?;
                         pending.push(Pending::CallCallee(current, arguments));
                         current = child(self.mir, current, Role::Callee)?;

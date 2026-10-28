@@ -1,0 +1,73 @@
+# Exploration oracle only: scoped writer for measuring hand-written ArrayMut.
+# Not a proposed public language API; no state is returned to the caller.
+def alias_probe_collect: for(A) Fn(Fn(Fn(A) -> Bool) -> Bool) -> Array(A) = fn(produce) {
+    let output = create_mut_builder(array_plan([].ty!(Array(A))));
+    let ignored = produce(fn(item) { oracle_array_push(output, item) });
+    finish(output)
+};
+pub use self::{alias_probe_collect};
+
+use std::dict as oracle_dict;
+type OracleArray(A) = MutBuilder(A, Array(A), ArrayMut(A));
+type OracleDict(A) = MutBuilder(Edit(String,A), Dict(A), (Array(String),Array(A),Bytes,Bool));
+def oracle_array_new: for(A) Fn() -> OracleArray(A) = fn() { create_mut_builder(array_plan([].ty!(Array(A)))) };
+native oracle_array_push: for(A) Fn(OracleArray(A), A) -> Bool;
+def oracle_array_finish: for(A) Fn(OracleArray(A)) -> Array(A) = fn(output) { finish(output) };
+def oracle_string_new: Fn() -> StringMut = fn() { string_mut() };
+def oracle_string_push: Fn(StringMut, String) -> Bool = fn(output, item) { oracle_array_push(output.chunks, item) };
+def oracle_string_finish: Fn(StringMut) -> String = fn(output) { string_finish(output) };
+native oracle_dict_add: for(A) Fn(OracleDict(A), String, A) -> Bool;
+native oracle_dict_put: for(A) Fn(OracleDict(A), String, A) -> Bool;
+def oracle_dict_collect: for(A) Fn(Fn(Fn(String,A)->Bool)->Bool) -> Dict(A) = fn(produce) {
+    let output = create_mut_builder(dict_plan({}.ty!(Dict(A))));
+    let ignored = produce(fn(key,value) { oracle_dict_put(output, key, value) });
+    finish(output)
+};
+def oracle_walk: for(A) Fn(Array(A), OracleDict(A), Fn(A)->String, Fn(A)->Array(A)) -> Bool = fn(pending, seen, key, expand) {
+    let fresh = alias_probe_collect(fn(emit) {
+        arrays::fold(pending, False, fn(previous,item) {
+            if oracle_dict_add(seen, key(item), item) { emit(item) } else { False }
+        })
+    });
+    if fresh == [] { True }
+    else { oracle_walk(arrays::flat_map(fresh, expand), seen, key, expand) }
+};
+def oracle_discover: for(A) Fn(Array(A), Fn(A)->String, Fn(A)->Array(A)) -> Array(A) = fn(seeds,key,expand) {
+    let seen = create_mut_builder(dict_plan({}.ty!(Dict(A))));
+    oracle_walk(seeds,seen,key,expand);
+    oracle_dict::values(finish(seen))
+};
+pub use self::{OracleArray, OracleDict, oracle_array_new, oracle_array_push, oracle_array_finish,
+    oracle_string_new, oracle_string_push, oracle_string_finish, oracle_dict_collect, oracle_discover};
+def oracle_dict_new: for(A) Fn() -> OracleDict(A) = fn() { create_mut_builder(dict_plan({}.ty!(Dict(A)))) };
+def oracle_dict_finish: for(A) Fn(OracleDict(A)) -> Dict(A) = fn(output) { finish(output) };
+pub use self::{oracle_dict_new, oracle_dict_put, oracle_dict_finish};
+
+type OracleTypeSet = struct { bits: Bytes };
+native oracle_type_set: Fn() -> OracleTypeSet;
+native oracle_type_first: Fn(OracleTypeSet, Type) -> Bool;
+def oracle_type_unique: Fn(Array(Type)) -> Array(Type) = fn(types) {
+    let seen = oracle_type_set();
+    let out = oracle_array_new();
+    arrays::fold(types, False, fn(previous,ty) {
+        if oracle_type_first(seen,ty) { oracle_array_push(out,ty) } else { False }
+    });
+    oracle_array_finish(out)
+};
+def oracle_type_walk: Fn(Array(Type), OracleTypeSet, OracleArray(Type), Fn(Type)->Array(Type)) -> Bool = fn(pending, seen, out, expand) {
+    let fresh = oracle_array_new();
+    arrays::fold(pending, False, fn(previous,ty) {
+        if oracle_type_first(seen,ty) { oracle_array_push(out,ty); oracle_array_push(fresh,ty) } else { False }
+    });
+    let next = oracle_array_finish(fresh);
+    if next == [] { True } else { oracle_type_walk(arrays::flat_map(next,expand), seen,out,expand) }
+};
+def oracle_type_discover: Fn(Array(Type), Fn(Type)->String, Fn(Type)->Array(Type)) -> Array(Type) = fn(seeds,key,expand) {
+    let seen = oracle_type_set();
+    let out = oracle_array_new();
+    oracle_type_walk(seeds,seen,out,expand);
+    oracle_dict::values(oracle_dict::from_pairs(arrays::map(oracle_array_finish(out),fn(ty) { (key(ty),ty) })))
+};
+# The visited set never escapes a complete operation. In particular there is no
+# public first/contains interface through which a caller can observe history.
+pub use self::{oracle_type_unique, oracle_type_discover};

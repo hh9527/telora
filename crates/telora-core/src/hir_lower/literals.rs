@@ -29,12 +29,8 @@ impl Lower<'_> {
                     HirKind::Variable("\0interpolation_display".into()),
                     vec![],
                 );
-                let name = self.synthetic(
-                    Role::Name,
-                    expression,
-                    HirKind::Name("display".into()),
-                    vec![],
-                );
+                let name =
+                    self.synthetic(Role::Name, expression, HirKind::Name("fmt".into()), vec![]);
                 let callee = self.synthetic(
                     Role::Callee,
                     expression,
@@ -45,7 +41,21 @@ impl Lower<'_> {
                     Role::Part,
                     expression,
                     HirKind::Call,
-                    vec![callee, Input::expr(Role::Argument, expression)],
+                    vec![
+                        callee,
+                        Input::expr(Role::Argument, expression),
+                        self.synthetic(
+                            Role::Argument,
+                            expression,
+                            HirKind::Call,
+                            vec![self.synthetic(
+                                Role::Callee,
+                                expression,
+                                HirKind::Variable("\0interpolation_empty".into()),
+                                vec![],
+                            )],
+                        ),
+                    ],
                 ));
             } else {
                 parts.push(self.synthetic(

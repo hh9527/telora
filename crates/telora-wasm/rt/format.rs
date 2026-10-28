@@ -17,6 +17,12 @@ pub(crate) unsafe fn try_render_with(mut write: impl FnMut(&mut dyn Write) -> fm
     if write(&mut text).is_err() {
         return 0;
     }
+    unsafe { finish_text(&text) }
+}
+
+/// Publish an already completed, owned-writer text with one managed copy.
+/// The borrowed text must not point into the relocatable managed word arena.
+pub(crate) unsafe fn finish_text(text: &str) -> u32 {
     let bytes = u32::try_from(text.len()).unwrap();
     unsafe {
         let span = crate::telora_alloc(bytes.checked_add(8).unwrap());

@@ -3,7 +3,7 @@ use std::fmt as fmt;
 
 type State = enum { Ok };
 impl fmt::Display for State {
-    display: fn(value) { match value { State::Ok => fmt::from_string("Ok") } },
+    fmt: fn(value, f) { match value { State::Ok => fmt::write_str(f, "Ok") } },
 };
 
 def name: String = "Ada";

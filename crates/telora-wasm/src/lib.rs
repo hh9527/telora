@@ -52,6 +52,7 @@ mod enums;
 mod equality;
 mod equality_format;
 mod equality_plan;
+mod format_fusion;
 mod format_ops;
 mod fuel_quota;
 mod function_names;
@@ -64,6 +65,7 @@ mod input_heap;
 mod input_types;
 mod interpreters;
 mod json_ops;
+mod literal_pairs;
 mod local_instances;
 mod map_order;
 mod natives;
@@ -120,3 +122,7 @@ pub mod staged_build;
 mod column_map;
 mod column_search;
 mod map_order_kind;
+
+mod collection_alias;
+
+mod collection_summaries;

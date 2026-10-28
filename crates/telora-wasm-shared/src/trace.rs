@@ -252,7 +252,12 @@ pub fn object(
             })?;
         }
         FORMATS => {
-            let count = if v.read(old)? == 4 { 2 } else { 1 };
+            let count = match v.read(old)? {
+                0 => 0,
+                1..=3 => 1,
+                4 | 6..=11 => 2,
+                _ => return Err(Error::Layout),
+            };
             for index in 0..count {
                 let ty = word(v, old, 12 + index * 4)?;
                 indirect(v, add(old, 4 + index * 4)?, add(at, 4 + index * 4)?, ty)?;

@@ -13,7 +13,7 @@ pub unsafe extern "C" fn telora_json_write(op: u32, a: u32, b: u32) -> u32 {
         }
         if op == 1 {
             let writer = Box::from_raw(a as *mut Writer);
-            return crate::format::render_with(|out| out.write_str(&writer.output));
+            return crate::format::finish_text(&writer.output);
         }
         if op == 11 {
             drop(Box::from_raw(a as *mut Writer));

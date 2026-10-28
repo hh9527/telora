@@ -1100,9 +1100,13 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 Display closure 的普通函数；插值路径只投影固定字段并调用这些 closure。
 模板字段支持 String、Int、Float 和嵌套 `DisplayBy` struct；模板解释器不会动态选择
 字段类型的其他显式 `Display` impl。
-`Display::display` 和 `fmt::display`
-返回 opaque `Fmt`；显式物化文本写作
-`fmt::render(fmt::Display::display(endpoint))`。`fmt::concat(strings, items)` 要求
+`Display::fmt(value, f) -> Fmt` 接收不可变累加器并返回新值；显式物化写作
+`fmt::render(fmt::Display::fmt(endpoint, fmt::empty()))`，便利入口是 `fmt::to_string(endpoint)`。
+`fmt::write_str/write_int/write_float(f, value)`、`fmt::write_fmt(f, fragment)` 都保留旧值，
+可以安全地复用前缀和分叉。`fmt::encode_json_string(f, value)` 追加完整 JSON 字符串
+字面量（含双引号和转义）；`fmt::encode_json_float` 拒绝 NaN 和无穷，普通 `write_float`
+遵循 Float 展示规则。连续追加不增加递归深度，嵌套 Fmt 仍受深度限制。
+`fmt::display(Type, value)` 是从空累加器开始的 property 便利入口。`fmt::concat(strings, items)` 要求
 `strings.len == items.len + 1`，并以延迟 fragment 组合常量文本与展示值。插值在
 整个结果的末端物化。Fmt 及其输出保存在 Guest 内，计算受 Wasm fuel、内存和
 格式渲染深度检查约束；不存在 Host payload 的逐对象预扣计费承诺。

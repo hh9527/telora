@@ -10,40 +10,50 @@ unsafe fn array_item(value: u32, index: u32, width: u32) -> u32 {
     }
 }
 
+// Append chains do not add nesting depth; concat and embedded Fmt do.
+// The work stack lives outside managed memory and holds borrowed pointers only.
 unsafe fn render(value: u32, output: &mut dyn Write, depth: u32) -> fmt::Result {
-    if depth >= 128 {
-        return Err(fmt::Error);
-    }
+    enum Task { Format(u32, u32), Text(u32), Int(u32), Float(u32), Quoted(u32) }
+    let mut tasks = alloc::vec![Task::Format(value, depth)];
     unsafe {
-        let node = word(
-            telora_table_get(table_address(FORMATS), word(value, DATA)),
-            0,
-        );
-        let first = word(node, 4);
-        match word(node, 0) {
-            1 => output.write_str(text(first)),
-            2 => write!(
-                output,
-                "{}",
-                crate::heap::read::<i64>(first + DATA as u32)
-            ),
-            3 => write!(
-                output,
-                "{}",
-                crate::heap::read::<f64>(first + DATA as u32)
-            ),
-            4 => {
-                let items = word(node, 8);
-                let count = word(items, DATA + 8) - word(items, DATA + 4);
-                // The generated constructor validates lengths before publishing.
-                for index in 0..count {
-                    output.write_str(text(array_item(first, index, STRING_BYTES)))?;
-                    render(array_item(items, index, SCALAR_BYTES), output, depth + 1)?;
-                }
-                output.write_str(text(array_item(first, count, STRING_BYTES)))
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(v) => output.write_str(text(v))?,
+                Task::Int(v) => write!(output, "{}", crate::heap::read::<i64>(v + DATA as u32))?,
+                Task::Float(v) => write!(output, "{}", crate::heap::read::<f64>(v + DATA as u32))?,
+                Task::Quoted(v) => crate::json_text::quoted(output, text(v))?,
+                Task::Format(value, depth) => {
+                    if depth >= 128 { return Err(fmt::Error); }
+                    let node = word(telora_table_get(table_address(FORMATS), word(value, DATA)), 0);
+                    let first = word(node, 4);
+                    let second = word(node, 8);
+                    match word(node, 0) {
+                        0 => {},
+                        1 => tasks.push(Task::Text(first)),
+                        2 => tasks.push(Task::Int(first)),
+                        3 => tasks.push(Task::Float(first)),
+                        4 => {
+                            let count = word(second, DATA + 8) - word(second, DATA + 4);
+                            tasks.push(Task::Text(array_item(first, count, STRING_BYTES)));
+                            for index in (0..count).rev() {
+                                tasks.push(Task::Format(array_item(second, index, SCALAR_BYTES), depth + 1));
+                                tasks.push(Task::Text(array_item(first, index, STRING_BYTES)));
+                            }
+                        },
+                        op @ 6..=11 => {
+                            tasks.push(match op {
+                                6 => Task::Text(second), 7 => Task::Int(second),
+                                8 | 11 => Task::Float(second), 9 => Task::Quoted(second),
+                                10 => Task::Format(second, depth + 1), _ => unreachable!(),
+                            });
+                            tasks.push(Task::Format(first, depth));
+                        },
+                        _ => core::arch::wasm32::unreachable(),
+                    }
+                },
             }
-            _ => core::arch::wasm32::unreachable(),
         }
+        Ok(())
     }
 }
 
@@ -63,6 +73,9 @@ pub unsafe extern "C" fn telora_format_join(parts: u32, count: u32) -> u32 {
                 match word(part, 0) {
                     1 => output.write_str(text(word(part, 4)))?,
                     2 => render(word(part, 4), output, 0)?,
+                    3 => write!(output, "{}", crate::heap::read::<i64>(word(part, 4) + DATA as u32))?,
+                    4 => write!(output, "{}", crate::heap::read::<f64>(word(part, 4) + DATA as u32))?,
+                    5 => crate::json_text::quoted(output, text(word(part, 4)))?,
                     _ => core::arch::wasm32::unreachable(),
                 }
             }

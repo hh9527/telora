@@ -4,56 +4,52 @@ use std::type_desc as type_desc;
 use std::type_desc::{ TypeDesc };
 use std::type_property as type_property;
 
+# Immutable output plan. Every write preserves all previous versions.
 native type Fmt @1;
+native make_empty: Fn() -> Fmt;
+def empty_value: Fmt = make_empty();
+def empty: Fn() -> Fmt = fn() { empty_value };
+native write_str: Fn(Fmt, String) -> Fmt;
+native write_int: Fn(Fmt, Int) -> Fmt;
+native write_float: Fn(Fmt, Float) -> Fmt;
+native encode_json_string: Fn(Fmt, String) -> Fmt;
+native encode_json_float: Fn(Fmt, Float) -> Fmt;
+native write_fmt: Fn(Fmt, Fmt) -> Fmt;
+native render: Fn(Fmt) -> String;
 
-type DisplayTemplate = struct {
-    strings: Array(String),
-    fields: Array(String),
-};
-
-@property(PropertyTarget::Type)
-type DisplayBy = struct {
-    template: DisplayTemplate,
-    display: Fn(Dyn) -> Fmt,
-};
-
-native prepare: Fn(String) -> Tuple([Array(String), Array(String)]);
+# Standalone fragments remain convenient immutable constructors.
 native from_string: Fn(String) -> Fmt;
 native from_int: Fn(Int) -> Fmt;
 native from_float: Fn(Float) -> Fmt;
 native concat: Fn(Array(String), Array(Fmt)) -> Fmt;
-native render: Fn(Fmt) -> String;
+native prepare: Fn(String) -> Tuple([Array(String), Array(String)]);
 
-def project_string: Fn(Dyn) -> Fmt = fn(value) {
+type DisplayTemplate = struct { strings: Array(String), fields: Array(String) };
+@property(PropertyTarget::Type)
+type DisplayBy = struct { template: DisplayTemplate, fmt: Fn(Dyn, Fmt) -> Fmt };
+
+def project_string: Fn(Dyn, Fmt) -> Fmt = fn(value, f) {
     match dyn::project_with(String.type, value) {
-        Some(value) => from_string(value),
-        None => fail!("prepared Display expected String", value),
+        Some(value) => write_str(f, value), None => fail!("prepared Display expected String", value),
     }
 };
-
-def project_int: Fn(Dyn) -> Fmt = fn(value) {
+def project_int: Fn(Dyn, Fmt) -> Fmt = fn(value, f) {
     match dyn::project_with(Int.type, value) {
-        Some(value) => from_int(value),
-        None => fail!("prepared Display expected Int", value),
+        Some(value) => write_int(f, value), None => fail!("prepared Display expected Int", value),
     }
 };
-
-def project_float: Fn(Dyn) -> Fmt = fn(value) {
+def project_float: Fn(Dyn, Fmt) -> Fmt = fn(value, f) {
     match dyn::project_with(Float.type, value) {
-        Some(value) => from_float(value),
-        None => fail!("prepared Display expected Float", value),
+        Some(value) => write_float(f, value), None => fail!("prepared Display expected Float", value),
     }
 };
-
-decl display_for: Fn(Type) -> Fn(Dyn) -> Fmt;
+decl display_for: Fn(Type) -> Fn(Dyn, Fmt) -> Fmt;
 def display_for = fn(target) {
     let target_kind = type_desc::kind(target);
     let resolved = match target_kind {
         type_desc::TypeDescKind::Ref => match type_desc::resolve(target) {
-            Ok(value) => value,
-            Err(error) => fail!(error.message, target),
-        },
-        _ => target,
+            Ok(value) => value, Err(error) => fail!(error.message, target),
+        }, _ => target,
     };
     match type_desc::kind(resolved) {
         type_desc::TypeDescKind::String => project_string,
@@ -61,70 +57,51 @@ def display_for = fn(target) {
         type_desc::TypeDescKind::Float => project_float,
         _ => match target_kind {
             type_desc::TypeDescKind::Ref => match type_property::get_type_prop(target, DisplayBy.type) {
-                Some(property) => property.display,
+                Some(property) => property.fmt,
                 None => fail!("Display template field has no Display capability", target),
-            },
-            _ => fail!("Display template field has no Display capability", target),
+            }, _ => fail!("Display template field has no Display capability", target),
         },
     }
 };
-
-def prepare_display: Fn(Type, DisplayTemplate) -> Fn(Dyn) -> Fmt = fn(target, template) {
+def prepare_display: Fn(Type, DisplayTemplate) -> Fn(Dyn, Fmt) -> Fmt = fn(target, template) {
     let fields = type_desc::fields(target);
-    let displays: Array(Fn(Dyn) -> Fmt) = array::map(template.fields, fn(name) {
+    let displays: Array(Fn(Dyn, Fmt) -> Fmt) = array::map(template.fields, fn(name) {
         let field = match array::find(fields, fn(field) { field.name == name }) {
             Some(field) => field,
             None => fail!(`Display template references unknown field "\{name}"`, target, name),
         };
         let display = display_for(field.ty);
-        fn(value) {
-            display(dyn::get_field_value(value, field.index))
-        }
+        fn(value, f) { display(dyn::get_field_value(value, field.index), f) }
     });
-    fn(value) {
-        concat(template.strings, array::map(displays, fn(display) { display(value) }))
+    fn(value, f) {
+        let result = array::fold(array::enumerate(displays), f, fn(f, indexed) {
+            let f = write_str(f, template.strings[indexed.0]);
+            indexed.1(value, f)
+        });
+        write_str(result, template.strings[array::length(displays)])
     }
 };
-
 def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(template) {
     fn(target, previous) {
         let parts = prepare(template);
         let template: DisplayTemplate = { strings: parts.0, fields: parts.1 };
-        let property: DisplayBy = {
-            template,
-            display: prepare_display(target, template),
-        };
-        property
+        {template, fmt: prepare_display(target, template)}.ty!(DisplayBy)
     }
 };
-
-def display: for(A: Property(DisplayBy)) Fn(TypeOf(A), A) -> Fmt = fn(target, value) {
+def format: for(A: Property(DisplayBy)) Fn(TypeOf(A), A, Fmt) -> Fmt = fn(target, value, f) {
     let property = type_property::evidence(target, DisplayBy.type);
-    property.display(dyn::pack(target, value))
+    property.fmt(dyn::pack(target, value), f)
 };
-
-trait Display {
-    display: Fn(Self) -> Fmt,
+def display: for(A: Property(DisplayBy)) Fn(TypeOf(A), A) -> Fmt = fn(target, value) {
+    format(target, value, empty())
 };
+trait Display { fmt: Fn(Self, Fmt) -> Fmt };
+impl Display for String { fmt: fn(value, f) { write_str(f, value) } };
+impl Display for Int { fmt: fn(value, f) { write_int(f, value) } };
+impl Display for Float { fmt: fn(value, f) { write_float(f, value) } };
+impl(T: Property(DisplayBy)) Display for T { fmt: fn(value, f) { format(T.type, value, f) } };
+def to_string: for(A: Display) Fn(A) -> String = fn(value) { render(Display::fmt(value, empty())) };
 
-
-impl Display for String { display: from_string };
-impl Display for Int { display: from_int };
-impl Display for Float { display: from_float };
-
-impl(T: Property(DisplayBy)) Display for T {
-    display: fn(value) { display(T.type, value) },
-};
-
-pub use self::{
-    Display,
-    DisplayBy,
-    Fmt,
-    concat,
-    display,
-    display_by,
-    from_float,
-    from_int,
-    from_string,
-    render,
-};
+pub use self::{ Display, DisplayBy, Fmt, empty, write_str, write_int, write_float,
+    encode_json_string, encode_json_float, write_fmt, render, to_string,
+    concat, display, format, display_by, from_float, from_int, from_string };

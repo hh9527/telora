@@ -136,6 +136,7 @@ impl Emitter<'_> {
         ty: TypeId,
         element: TypeId,
         item: u32,
+        in_place: bool,
     ) -> Result<(), String> {
         let (data, count) = self.array_parts(array, self.width(element)?);
         let capacity = self.local(ValType::I32);
@@ -152,9 +153,13 @@ impl Emitter<'_> {
         let stored = self.read32(object, 12);
         self.extend([I::LocalGet(stored), I::LocalSet(capacity), I::End]);
         self.sequence_append(data, count, capacity, element, item)?;
-        let grown =
-            self.array_result_with_capacity(ty, data, count, capacity, self.width(element)?)?;
-        self.copy(array, 0, grown, self.width(ty)?);
+        if in_place {
+            self.private_array_publish(array, data, count, capacity, element)?;
+        } else {
+            let grown =
+                self.array_result_with_capacity(ty, data, count, capacity, self.width(element)?)?;
+            self.copy(array, 0, grown, self.width(ty)?);
+        }
         Ok(())
     }
     pub(super) fn pipeline_dict_native(
@@ -208,33 +213,46 @@ impl Emitter<'_> {
             ]);
             return self.column_map_result(output, kout, vout, count, l.key, l.value);
         }
-        let edit = self.parameter(1);
-        let edit_ty = args[1];
-        let variants = &self.plan.layouts[edit_ty.index()].variants;
-        let thunk_pair = self.plan.layouts[variants[0].type_id.unwrap()].id();
-        let update_pair = self.plan.layouts[variants[1].type_id.unwrap()].id();
-        let tag = self.read32(edit, DATA);
-        let key = self.local(ValType::I32);
-        let payload = self.local(ValType::I32);
-        self.extend([I::LocalGet(tag), I::If(BlockType::Empty)]);
-        for (which, ty) in [(1, update_pair), (0, thunk_pair)] {
-            if which == 0 {
-                self.emit(I::Else)
+        let (tag, key, payload) = if matches!(name, "oracle_put" | "oracle_add") {
+            let tag = self.local(ValType::I32);
+            self.extend([I::I32Const(1), I::LocalSet(tag)]);
+            (tag, self.parameter(1), self.parameter(2))
+        } else {
+            let edit = self.parameter(1);
+            let edit_ty = args[1];
+            let variants = &self.plan.layouts[edit_ty.index()].variants;
+            let thunk_pair = self.plan.layouts[variants[0].type_id.unwrap()].id();
+            let update_pair = self.plan.layouts[variants[1].type_id.unwrap()].id();
+            let tag = self.read32(edit, DATA);
+            let key = self.local(ValType::I32);
+            let payload = self.local(ValType::I32);
+            self.extend([I::LocalGet(tag), I::If(BlockType::Empty)]);
+            for (which, ty) in [(1, update_pair), (0, thunk_pair)] {
+                if which == 0 {
+                    self.emit(I::Else)
+                }
+                let p = self.enum_payload(edit_ty, which, edit)?;
+                let k = self.projection_value_type(ty, p, 0)?;
+                let v = self.projection_value_type(ty, p, 1)?;
+                self.extend([
+                    I::LocalGet(k),
+                    I::LocalSet(key),
+                    I::LocalGet(v),
+                    I::LocalSet(payload),
+                ]);
             }
-            let p = self.enum_payload(edit_ty, which, edit)?;
-            let k = self.projection_value_type(ty, p, 0)?;
-            let v = self.projection_value_type(ty, p, 1)?;
-            self.extend([
-                I::LocalGet(k),
-                I::LocalSet(key),
-                I::LocalGet(v),
-                I::LocalSet(payload),
-            ]);
-        }
-        self.emit(I::End);
+            self.emit(I::End);
+            (tag, key, payload)
+        };
         let (kdata, count) = self.array_parts(keys, self.width(l.key)?);
         let (idata, _) = self.map_mut_index_parts(index);
         let (at, found) = self.column_lower(kdata, Some((idata, 4)), count, key, l.key)?;
+        if name == "oracle_add" {
+            self.extend([I::LocalGet(found), I::If(BlockType::Empty)]);
+            let no = self.scalar_as(self.key.node, output, 0)?;
+            self.extend([I::LocalGet(no), I::Return, I::End]);
+        }
+
         self.extend([
             I::LocalGet(found),
             I::LocalGet(tag),
@@ -262,8 +280,22 @@ impl Emitter<'_> {
         let target = self.array_item(vdata, pos, self.width(l.value)?);
         self.copy(target, 0, value, self.width(l.value)?);
         self.emit(I::Else);
-        self.map_mut_append(keys, l.keys, l.key, key)?;
-        self.map_mut_append(values, l.values, l.value, value)?;
+        self.map_mut_append(
+            keys,
+            l.keys,
+            l.key,
+            key,
+            matches!(name, "oracle_put" | "oracle_add")
+                || std::env::var_os("TELORA_EXPERIMENTAL_PRIVATE_BUILDERS").is_some(),
+        )?;
+        self.map_mut_append(
+            values,
+            l.values,
+            l.value,
+            value,
+            matches!(name, "oracle_put" | "oracle_add")
+                || std::env::var_os("TELORA_EXPERIMENTAL_PRIVATE_BUILDERS").is_some(),
+        )?;
         let (old_data, capacity) = self.map_mut_index_parts(index);
         self.extend([
             I::LocalGet(count),

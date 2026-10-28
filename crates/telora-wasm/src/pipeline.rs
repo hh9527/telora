@@ -1,10 +1,15 @@
 //! Private collection backends for immutable pipeline operators.
+#[cfg(test)]
+#[path = "collection_array_probe.rs"]
+mod alias_probe;
 #[path = "pipeline_array.rs"]
 mod array;
 #[path = "pipeline_dict.rs"]
 mod dict;
 #[path = "pipeline_memo.rs"]
 mod memo;
+#[path = "pipeline_type_set.rs"]
+mod type_set;
 use crate::emit::Emitter;
 use telora_core::mir::{TypeConstructor as T, TypeId};
 
@@ -78,6 +83,11 @@ impl Emitter<'_> {
         Ok((item, result, state, storage, kind))
     }
     pub(crate) fn pipeline_native(&mut self, name: &str) -> Result<u32, String> {
+        if matches!(name, "oracle_type_set" | "oracle_type_first") {
+            return self.oracle_type_set_native(name);
+        }
+        let oracle_array = name == "oracle_array_push";
+        let name = if oracle_array { "extend" } else { name };
         if matches!(name, "new_run" | "new_slots" | "memo") {
             return self.pipeline_memo_native(name);
         }
@@ -109,6 +119,43 @@ impl Emitter<'_> {
         }
         let builder = self.parameter(0);
         let (states, _) = self.sequence_field(builder, builder_ty, "states")?;
+        if matches!(name, "oracle_dict_put" | "oracle_dict_add") {
+            let key = self.mir.types[result.index()].arguments[1];
+            let value = self.mir.types[result.index()].arguments[0];
+            if kind != "MapMut"
+                || args.len() != 4
+                || args[1] != key
+                || args[2] != value
+                || self.mir.types[output.index()].constructor != T::Bool
+            {
+                return Err("Wasm: invalid experimental MapMut put contract".into());
+            }
+            return self.pipeline_dict_native(
+                if name == "oracle_dict_add" {
+                    "oracle_add"
+                } else {
+                    "oracle_put"
+                },
+                &[storage, value, output],
+                states,
+            );
+        }
+        #[cfg(test)]
+        if matches!(
+            name,
+            "alias_map_array"
+                | "alias_filter_array"
+                | "alias_filtermap_array"
+                | "alias_map_array_noescape"
+                | "alias_filter_array_noescape"
+                | "alias_map_array_checked"
+                | "alias_filter_array_checked"
+                | "alias_filter_array_generic"
+                | "alias_filter_array_generic_checked"
+        ) && kind == "ArrayMut"
+        {
+            return self.alias_array_rewrite(name, states, state, result, output);
+        }
         let native = match name {
             "extend"
                 if args.len() == 3
@@ -131,7 +178,13 @@ impl Emitter<'_> {
                 states,
             )
         } else {
-            self.pipeline_array_native(name, states, state, result, output)
+            self.pipeline_array_native(
+                if oracle_array { "oracle_push" } else { name },
+                states,
+                state,
+                result,
+                output,
+            )
         }
     }
 }

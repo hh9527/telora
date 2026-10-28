@@ -481,6 +481,7 @@ impl Plan {
                 plan.demand_functions.insert(index);
             }
         }
+        crate::collection_alias::write_report(mir, &plan)?;
         Ok(plan)
     }
 

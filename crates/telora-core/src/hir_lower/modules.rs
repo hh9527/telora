@@ -104,6 +104,36 @@ impl Lower<'_> {
                 },
                 vec![name, value],
             );
+            let empty_name = self.synthetic(
+                Role::Name,
+                syntax,
+                HirKind::Name("\0interpolation_empty".into()),
+                vec![],
+            );
+            let empty_module = self.synthetic(
+                Role::Value,
+                syntax,
+                HirKind::String("std/fmt".into()),
+                vec![],
+            );
+            let empty_binding = self.synthetic(
+                Role::Binding,
+                syntax,
+                HirKind::Binding {
+                    kind: B::Import,
+                    initializer: None,
+                    imported: Some("empty".into()),
+                },
+                vec![empty_name, empty_module],
+            );
+            let empty_node = self.run(empty_binding.node, empty_binding.mode);
+            self.mir.hir[body.index()].children.insert(
+                0,
+                Edge {
+                    role: Role::Binding,
+                    node: empty_node,
+                },
+            );
             let node = self.run(binding.node, binding.mode);
             self.mir.hir[body.index()].children.insert(
                 0,

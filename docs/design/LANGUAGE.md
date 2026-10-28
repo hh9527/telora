@@ -122,7 +122,7 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 
 `display_by` 是受控模板 eDSL。它发布 `DisplayBy` typed property；`std/fmt` 中的
 property-constrained blanket impl 由此为 `Endpoint` 提供 `Display` evidence。
-`DisplayBy` 保存普通 `DisplayTemplate` 数据和普通 `Fn(Dyn) -> Fmt` closure；模板数据
+`DisplayBy` 保存普通 `DisplayTemplate` 数据和普通 `Fn(Dyn, Fmt) -> Fmt` closure；模板数据
 由常量 String 与字段名 Array 组成。property interpreter
 在发布阶段解析模板、验证字段、把字段名解析为 canonical index，并捕获字段的 Display
 closure。运行期路径只按固定 index 投影并调用已捕获 closure。codec 的 text bridge 通过
@@ -130,8 +130,8 @@ closure。运行期路径只按固定 index 投影并调用已捕获 closure。c
 执行处的 rule，输入值保留自己的数据来源。它直接支持
 String、Int、Float 以及嵌套的 `DisplayBy` struct；它不动态调用字段类型上的任意
 显式 `Display` impl。
-`Display::display` 返回 opaque `Fmt`，`fmt::display` 也返回 `Fmt`；显式调用使用
-`fmt::render(fmt::Display::display(endpoint))` 得到 String。`fmt::concat(strings, items)`
+`Display::fmt(value, accumulator)` 返回新的 opaque `Fmt`，保留旧累加器；
+`fmt::to_string(endpoint)` 等价于 `fmt::render(Display::fmt(endpoint, fmt::empty()))`。`fmt::concat(strings, items)`
 按 `strings.len == items.len + 1` 组合常量文本和 `Fmt` fragment。插值使用同一
 `Display -> Fmt` 路径，在 render 时物化字符串。Fmt 是 Guest 内不可变的格式数据，
 不是 Host 对象；其计算受 Wasm fuel 与内存限制。debug repr、codec/JSON 与 Display
@@ -672,27 +672,26 @@ Trait 声明定义一个由 provider module 和稳定 local slot 标识的 nomin
 
 ```telora
 trait Display {
-    display: Fn(Self) -> Fmt,
+    fmt: Fn(Self, Fmt) -> Fmt,
 };
 
 impl Display for Endpoint {
-    display: fn(value) {
-        fmt::concat(
-            ["", ":", ""],
-            [fmt::from_string(value.host), fmt::from_int(value.port)],
-        )
+    fmt: fn(value, f) {
+        let f = fmt::write_str(f, value.host);
+        let f = fmt::write_str(f, ":");
+        fmt::write_int(f, value.port)
     },
 };
 
 impl(T: Property(DisplayBy)) Display for T {
-    display: fn(value) {
+    fmt: fn(value, f) {
         let property = type_property::evidence(T.type, DisplayBy.type);
-        property.display(dyn::pack(T.type, value))
+        property.fmt(dyn::pack(T.type, value), f)
     },
 };
 
 def render: for(T: Display) Fn(T) -> String = fn(value) {
-    fmt::render(Display::display(value))
+    fmt::render(Display::fmt(value, fmt::empty()))
 };
 ```
 
