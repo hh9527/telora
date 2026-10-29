@@ -12,6 +12,8 @@ pub(crate) struct Emitter<'a> {
     pub key: Key,
     code: Vec<I<'static>>,
     pub parameter_count: u32,
+    pub writer_mode: bool,
+    pub format_writer: Option<u32>,
     frame_base: Option<u32>,
     scratch_bytes: u32,
     function_pointers: BTreeMap<usize, u32>,
@@ -31,6 +33,8 @@ impl<'a> Emitter<'a> {
             key,
             code: vec![],
             parameter_count: 3,
+            writer_mode: false,
+            format_writer: None,
             frame_base: key.callable.then_some(3),
             scratch_bytes: 0,
             function_pointers: BTreeMap::new(),
@@ -974,7 +978,26 @@ pub(crate) fn compile(
     plan: &Plan,
     key: Key,
 ) -> Result<crate::object::ObjectFunction, String> {
+    compile_mode(mir, plan, key, false)
+}
+pub(crate) fn compile_writer(
+    mir: &Mir,
+    plan: &Plan,
+    key: Key,
+) -> Result<crate::object::ObjectFunction, String> {
+    compile_mode(mir, plan, key, true)
+}
+fn compile_mode(
+    mir: &Mir,
+    plan: &Plan,
+    key: Key,
+    writer_mode: bool,
+) -> Result<crate::object::ObjectFunction, String> {
     let mut emit = Emitter::new(mir, plan, key);
+    emit.writer_mode = writer_mode;
+    if writer_mode {
+        emit.region_writer();
+    }
     if let Special::Equal(ty) = key.special {
         emit.compare_type(ty)?;
     } else if let Special::Parse(ty) = key.special {
@@ -1001,7 +1024,9 @@ pub(crate) fn compile(
         let value = emit.constructor()?;
         emit.emit(I::LocalGet(value));
     } else if key.callable {
-        emit.plan_tail_calls()?;
+        if !writer_mode {
+            emit.plan_tail_calls()?;
+        }
         for (index, symbol) in plan.captures[&key].iter().enumerate() {
             let local = emit.local(ValType::I32);
             emit.extend([

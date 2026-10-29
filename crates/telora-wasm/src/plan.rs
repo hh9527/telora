@@ -93,6 +93,7 @@ impl Key {
 
 pub(crate) struct Plan {
     pub generated_helpers: u32,
+    pub format_regions: crate::format_regions::Regions,
     pub demand_functions: BTreeSet<u32>,
     pub function_results: BTreeMap<u32, Option<TypeId>>,
     pub constructor_aliases: BTreeMap<Key, Key>,
@@ -134,6 +135,7 @@ impl Plan {
         let layouts = telora_core::candidate_layout::calculate(executable.sealed_mir())?;
         let mut plan = Self {
             generated_helpers: 4,
+            format_regions: Default::default(),
             function_results: BTreeMap::new(),
             demand_functions: BTreeSet::new(),
             constructor_aliases: BTreeMap::new(),
@@ -480,6 +482,10 @@ impl Plan {
             if !key.callable {
                 plan.demand_functions.insert(index);
             }
+        }
+        plan.format_regions = crate::format_regions::Regions::build(mir, &plan);
+        for (&key, &index) in &plan.format_regions.functions {
+            plan.function_results.insert(index, key.result_type(mir)?);
         }
         crate::collection_alias::write_report(mir, &plan)?;
         Ok(plan)

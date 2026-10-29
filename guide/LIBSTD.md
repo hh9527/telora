@@ -134,3 +134,8 @@ telora query at std/type_property -p variant
 
 查询输出是结构化 JSONL，可供人、编辑器和 Agent 使用。模块树和精确签名无需在应用
 文档中复制维护。
+
+自定义 `Display::fmt` 与 `display_by` 都使用 `Fn(value, Fmt) -> Fmt` 的不可变
+累加器接口。Wasm 后端默认对可证明的线性追加链做整段 writer 特化，包括 helper、
+插值及 codec Display 桥接；保留旧版本、比较、分叉或捕获累加器时自动回退。
+程序不需要也不能通过这一优化获得可修改的 Fmt/String 对象。

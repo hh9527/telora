@@ -1,0 +1,14 @@
+use std::fmt as fmt;
+use std::_rt as rt;
+type Item=struct{bad:Bool};
+impl fmt::Display for Item {fmt:fn(value,f){
+    let f=fmt::write_str(f,"[");
+    let n=if value.bad {fail!("first")} else {dbg!(7)};
+    let f=fmt::write_int(f,n);
+    fmt::write_str(f,"]")
+}};
+pub def answer:Fn(Bool)->String=fn(bad){
+    match rt::with_diagnostics(fn(bad:Bool){fmt::to_string({bad}.ty!(Item))})(bad) {
+        Ok(value)=>value.0, Err(reports)=>if reports[0].message=="first" {"failed"} else {fail!("wrong failure")},
+    }
+};

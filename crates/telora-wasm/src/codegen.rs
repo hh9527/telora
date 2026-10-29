@@ -53,7 +53,7 @@ fn compile(
         ("telora_inject_data", BINARY_TYPE),
         ("telora_materialize_data", BINARY_TYPE),
     ];
-    plan.generated_helpers = helpers.len() as u32;
+    plan.generated_helpers = helpers.len() as u32 + plan.format_regions.functions.len() as u32;
     let mut manifest = crate::artifact::Manifest::build(executable, &plan.layouts)?;
     for (&symbol, &key) in &plan.globals {
         let mir = executable.sealed_mir().mir();
@@ -194,6 +194,9 @@ fn compile(
     for &(_, ty) in &helpers {
         functions.function(ty);
     }
+    for _ in &plan.format_regions.functions {
+        functions.function(CALL_TYPE);
+    }
     module.section(&functions);
     let heap_start = crate::compose::static_base()?
         .checked_add(
@@ -216,7 +219,11 @@ fn compile(
     elements.active(
         Some(0),
         &ConstExpr::i32_const(1),
-        Elements::Functions(Cow::Owned((FIRST_FUNCTION..initialize).collect())),
+        Elements::Functions(Cow::Owned(
+            (FIRST_FUNCTION..initialize)
+                .chain(plan.format_regions.functions.values().copied())
+                .collect(),
+        )),
     );
     module.section(&elements);
     let count = initialize + plan.generated_helpers;
@@ -320,6 +327,13 @@ fn compile(
         &plan,
         manifest.value_type,
     )?);
+    for &key in plan.format_regions.functions.keys() {
+        code.function(emit::compile_writer(
+            executable.sealed_mir().mir(),
+            &plan,
+            key,
+        )?);
+    }
     let (code, relocations) = code.finish(5);
     module.section(&code);
     let mut static_image = plan.reflection.clone();
@@ -337,7 +351,15 @@ fn compile(
         symbols.function(SymbolTable::WASM_SYM_UNDEFINED, index, None);
     }
     for index in FIRST_FUNCTION..count {
-        let name = if index >= initialize {
+        let name = if index >= initialize + helpers.len() as u32 {
+            let key = *plan
+                .format_regions
+                .functions
+                .keys()
+                .nth((index - initialize - helpers.len() as u32) as usize)
+                .unwrap();
+            format!("{}_writer", names.name(key, index))
+        } else if index >= initialize {
             helpers[(index - initialize) as usize].0.to_owned()
         } else {
             names.name(function_keys[(index - FIRST_FUNCTION) as usize], index)

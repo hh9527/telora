@@ -144,6 +144,25 @@ impl Emitter<'_> {
             self.report(node, message, second, count, false);
             self.emit(I::End);
         }
+        if self.writer_mode {
+            let writer = self.region_writer();
+            let op = match operation {
+                6 => 10,
+                7 => 3,
+                8 => 12,
+                9 => 2,
+                11 => 4,
+                _ => return Err("invalid formatter specialization".into()),
+            };
+            self.extend([
+                I::I32Const(op),
+                I::LocalGet(writer),
+                I::LocalGet(second),
+                I::Call(JSON_WRITE),
+                I::Drop,
+            ]);
+            return Ok(first);
+        }
         // Deferred nodes own plain operands after their caller's frame ends.
         let first = self.escape_plain(first, args[0])?;
         let second = if arity == 2 {
@@ -258,7 +277,16 @@ impl Emitter<'_> {
                         "Wasm: interpolation part lacks sealed String/Fmt conversion".into(),
                     );
                 };
-                (operation, self.expression(edge.node)?)
+                if operation == 2 {
+                    if let Some(value) = self.format_region_value(edge.node, string)? {
+                        self.root_value(value, string);
+                        (1, value)
+                    } else {
+                        (operation, self.expression(edge.node)?)
+                    }
+                } else {
+                    (operation, self.expression(edge.node)?)
+                }
             };
             subject = Some(value);
             self.store32(parts, index as u64 * 8, operation);

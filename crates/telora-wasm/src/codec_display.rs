@@ -60,14 +60,27 @@ impl Emitter<'_> {
             I::LocalSet(callback),
         ]);
         let empty = self.format_empty(self.key.node, fmt_type)?;
-        let formatted = self.invoke(callback, &[input, empty], fmt_type)?;
-        let span = self.local(ValType::I32);
-        self.extend([
-            I::LocalGet(formatted),
-            I::Call(FORMAT_RENDER),
-            I::LocalSet(span),
-        ]);
-        let text = self.format_result(self.key.node, self.string_type()?, span, formatted)?;
+        let text = if self.plan.format_regions.signatures.contains(&signature) {
+            self.format_region_apply(
+                self.key.node,
+                self.key.node,
+                signature,
+                callback,
+                &[input, empty],
+                None,
+                self.string_type()?,
+            )?
+        } else {
+            let formatted = self.invoke(callback, &[input, empty], fmt_type)?;
+            let span = self.local(ValType::I32);
+            self.extend([
+                I::LocalGet(formatted),
+                I::Call(FORMAT_RENDER),
+                I::LocalSet(span),
+            ]);
+            let text = self.format_result(self.key.node, self.string_type()?, span, formatted)?;
+            text
+        };
         self.copy(text, 0, input, LOC_BYTES);
         self.codec_variant(target, "String", Some(text), input)
     }

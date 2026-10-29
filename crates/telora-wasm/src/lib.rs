@@ -54,6 +54,8 @@ mod equality_format;
 mod equality_plan;
 mod format_fusion;
 mod format_ops;
+mod format_region_codegen;
+mod format_regions;
 mod fuel_quota;
 mod function_names;
 mod functions;

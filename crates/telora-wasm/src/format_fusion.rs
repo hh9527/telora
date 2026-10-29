@@ -167,7 +167,7 @@ impl Emitter<'_> {
                     .is_some_and(|m| self.mir.modules[m.index()].name == "std/fmt")
         })
     }
-    fn standard_fmt_empty(&self, node: HirId) -> bool {
+    pub(crate) fn standard_fmt_empty(&self, node: HirId) -> bool {
         if !matches!(self.mir.hir[node.index()].kind, HirKind::Call) {
             return false;
         }
@@ -292,6 +292,9 @@ impl Emitter<'_> {
             .map(Some)
     }
     pub(crate) fn format_render_call(&mut self, node: HirId) -> Result<Option<u32>, String> {
+        if let Some(value) = self.format_region_render(node)? {
+            return Ok(Some(value));
+        }
         if std::env::var_os("TELORA_EXPERIMENTAL_TEXT_WRITER").is_none() {
             return Ok(None);
         }

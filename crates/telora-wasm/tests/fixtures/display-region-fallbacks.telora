@@ -1,0 +1,26 @@
+use std::fmt as fmt;
+use std::string as string;
+type Fork = struct {};
+impl fmt::Display for Fork {fmt:fn(value,f){
+    let p=fmt::write_str(f,"p");
+    let a=fmt::write_int(p,1);let b=fmt::write_int(p,2);
+    fmt::from_string(string::join([fmt::render(a),"/",fmt::render(b)],""))
+}};
+type Observe = struct {};
+impl fmt::Display for Observe {fmt:fn(value,f){
+    if f==fmt::empty() {fmt::write_str(f,"equal")} else {f}
+}};
+type Ignore = struct {};
+impl fmt::Display for Ignore {fmt:fn(value,f){fmt::from_string("discarded")}};
+type Capture = struct {};
+impl fmt::Display for Capture {fmt:fn(value,f){
+    let callback:Fn()->fmt::Fmt=fn(){fmt::write_str(f,"captured")};callback()
+}};
+def unsafe_property:Fn(Type,Option(fmt::DisplayBy))->fmt::DisplayBy=fn(t,old){
+    {template:{strings:[""],fields:[]},fmt:fn(value,f){if f==fmt::empty(){fmt::from_string("property")}else{f}}}
+};
+@unsafe_property
+type Property = struct {};
+pub def answer:Fn()->Array(String)=fn(){[
+    fmt::to_string({}.ty!(Fork)),fmt::to_string({}.ty!(Observe)),fmt::to_string({}.ty!(Ignore)),fmt::to_string({}.ty!(Capture)),fmt::to_string({}.ty!(Property))
+]};

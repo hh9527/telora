@@ -146,6 +146,10 @@ impl Emitter<'_> {
         } else {
             None
         };
+        if self.writer_mode && self.plan.format_regions.calls.contains(&(self.key, node)) {
+            let writer = self.region_writer();
+            return self.writer_invoke(callee, values, self.ty(target)?, origin, writer, true);
+        }
         if self.tail_calls.contains(&node) {
             self.tail_invoke(
                 callee,
@@ -180,6 +184,13 @@ impl Emitter<'_> {
     }
     pub fn invoke(&mut self, callee: u32, values: &[u32], output: TypeId) -> Result<u32, String> {
         let origin = self.computation_origin(self.key.node)?;
+        if self.writer_mode
+            && crate::natives::identity(self.mir, self.key.node) == Some((5, "fold"))
+        {
+            let signature = self.mir.types[self.ty(self.key.node)?.index()].arguments[2];
+            let writer = self.region_writer();
+            return self.writer_invoke(callee, values, signature, Some(origin), writer, true);
+        }
         self.invoke_at(callee, values, Some(origin), output)
     }
     fn invoke_at(

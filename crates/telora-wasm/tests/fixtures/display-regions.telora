@@ -1,0 +1,33 @@
+use std::fmt as fmt;
+use std::string as string;
+use std::codec as codec;
+use std::json as json;
+type Custom = struct { name: String, count: Int };
+def suffix: Fn(Int, fmt::Fmt) -> fmt::Fmt = fn(n,f) {
+    let f=fmt::write_int(f,n);
+    fmt::write_str(f,")")
+};
+impl fmt::Display for Custom { fmt: fn(value,f) {
+    let f=fmt::write_str(f,"custom(");
+    let f=fmt::write_str(f,value.name);
+    let f=fmt::write_str(f,":");
+    suffix(value.count,f)
+} };
+@string::encode_by_display
+@fmt::display_by("{name}:{count}")
+type Item = struct { name: String, count: Int };
+@fmt::display_by("service={item}/{ratio}")
+type Service = struct { item: Item, ratio: Float };
+pub def answer: Fn(Int,String) -> Array(String) = fn(n,s) {
+    let item:Item={name:s,count:n};
+    let service:Service={item,ratio:0.125};
+    [fmt::to_string({name:s,count:n}.ty!(Custom)),fmt::to_string(item),fmt::to_string(service),fmt::render(fmt::display(Item.type,item))]
+};
+
+pub def codec_answer:Fn()->String=fn(){json::stringify(codec::encode({name:"a",count:7}.ty!(Item)))};
+
+pub def interpolation_answer: Fn(Int,String)->String = fn(n,s) {
+    let item:Item={name:s,count:n};
+    let custom:Custom={name:s,count:n};
+    `values=\{custom}/\{item}`
+};

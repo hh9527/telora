@@ -78,3 +78,27 @@ benchmarks/text-writer/accumulator-*.json 与 README.md。
 验收：core 211 项；默认/融合 Wasm 各 206 项，5 ignored，过滤既有 main 内存增长用例；
 默认/融合语言验收各 441 cases。新增覆盖版本复用/分叉、2048 次追加及比较、JSON 转义、
 负零、GC、构建快照、原生非有限浮点防御和失败/调试顺序。
+
+## 自定义 formatter 的整段融合（Issue #256）
+
+分支 `perf/display-writer-regions` 默认尝试融合自定义 Display、跨函数 helper、
+`display_by` property、插值及 codec 的 Display 桥接。业务接口仍是不可变 Fmt，
+不需要启用实验开关或手写可变 builder。
+
+编译器对 sealed world 中同签名的全部可能目标做保守线性证明：累加器必须唯一、
+只能转发和追加，不能分叉、比较、捕获或传给未知消费者。通过证明后生成内部 writer
+专用函数，共享隐藏 ABI 参数中的 Rust String；普通函数与 callable 身份保持不变。
+`array::fold` 的已证明 callback 可以转发同一个 writer。最终一次性生成 String。
+同签名中存在不安全目标时会保守回退，因此证明覆盖率仍有扩展空间。
+
+`write_fmt`/concat、观察旧版本的路径仍使用普通 Fmt。codec 桥接本身仍创建一个空
+Fmt；这不是 codec→Value→JSON 全链融合。新路径关闭 writer 版本的尾调用降级，
+递归 formatter 的进一步优化尚需独立验证。
+
+调用失败时，外层先销毁 writer，再传播 failure；调试和实参求值顺序不变。
+强制逐次 GC 验证了插值临时字符串的根，构建期快照也覆盖了 property closure 恢复。
+隐藏 writer 不会成为语言值或快照结果。Rust String 分配不包含在托管分配计数中。
+
+`TELORA_DISABLE_FORMAT_REGIONS=1` 仅用于编译对照；默认不设置即可自动受益。
+旧 `TELORA_EXPERIMENTAL_TEXT_WRITER` 原型仍保留，两者需要分别归因。
+应用对照、制品增长及原始计量见 lab-ontology 的 `benchmarks/display-regions/`。
