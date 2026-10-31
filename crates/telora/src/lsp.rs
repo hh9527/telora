@@ -18,7 +18,10 @@ use lsp::request::Request as _;
 use serde::de::DeserializeOwned;
 use telora_core::{
     CancellationToken, DocumentVersion, Location, PositionEncoding, QueryError, TextEdit,
-    TextPosition, TextRange, mir::TypeState, mir_query::MemberKind,
+    TextPosition, TextRange,
+    mir::{SymbolId, SymbolKind, TypeState},
+    mir_query::MemberKind,
+    syntax::kinds::BindingKind,
 };
 use tower_service::Service;
 
@@ -249,8 +252,17 @@ async fn semantic_request(
                     .expression_at(location)
                     .map(|expression| snapshot.mir.hir[expression.index()].location)
             });
+        let contents = definition
+            .and_then(|symbol| type_declaration_source(&snapshot, symbol))
+            .map(|value| {
+                lsp::MarkedString::LanguageString(lsp::LanguageString {
+                    language: "telora".to_owned(),
+                    value,
+                })
+            })
+            .or_else(|| contents.map(lsp::MarkedString::String));
         let hover = contents.map(|contents| lsp::Hover {
-            contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(contents)),
+            contents: lsp::HoverContents::Scalar(contents),
             range: hover_range.and_then(|range| to_lsp_range(&snapshot, range, encoding)),
         });
         return encode(hover);
@@ -333,6 +345,27 @@ async fn semantic_request(
         ErrorCode::METHOD_NOT_FOUND,
         "method not found",
     ))
+}
+
+/// The published snapshot owns the authoritative source, including unsaved edits.
+/// A type's metatype describes its value, while its declaration describes its shape.
+fn type_declaration_source(snapshot: &Snapshot, symbol: SymbolId) -> Option<String> {
+    let symbol = &snapshot.mir.symbols[symbol.index()];
+    if !matches!(
+        symbol.kind,
+        SymbolKind::Declaration(BindingKind::Type | BindingKind::NativeType)
+    ) {
+        return None;
+    }
+    let [declaration] = symbol.declarations.as_slice() else {
+        return None;
+    };
+    let location = snapshot.mir.hir[declaration.index()].location;
+    snapshot
+        .sources()
+        .get(location.source)
+        .slice(location)
+        .map(|source| source.trim().to_owned())
 }
 
 fn initialize(

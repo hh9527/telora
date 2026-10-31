@@ -286,6 +286,10 @@ telora query ...           以 JSONL 查询模块和语义事实；别名 q
 telora lsp                 启动语言服务器
 ```
 
+LSP 的 hover 展示值的推导类型；类型声明和类型引用展示原始 `type` 定义，
+包括结构字段、枚举分支、泛型参数和别名。跨模块引用与未保存的编辑使用同一语义快照，
+以 Telora 代码块展示定义。
+
 包管理在私有 Host 内使用 IMOS 物化依赖，不向程序开放外部 I/O。
 `eval` 读取普通 Value 导出；`run` 执行 MainService。
 

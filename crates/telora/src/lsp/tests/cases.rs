@@ -437,6 +437,123 @@ async fn hover_definition_and_references_use_the_published_snapshot() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn hover_shows_original_type_definitions_at_declarations_and_references() {
+    for (name, applied, declaration) in [
+        (
+            "User",
+            "User",
+            "pub type User = struct {\n    name: String,\n    active: Bool,\n};",
+        ),
+        (
+            "Choice",
+            "Choice",
+            "pub type Choice = enum { Empty, Value(Int) };",
+        ),
+        ("UserId", "UserId", "pub type UserId = struct(Int);"),
+        ("Box", "Box(Int)", "pub type Box(T) = struct { value: T };"),
+        ("Alias", "Alias", "pub type Alias = Int;"),
+    ] {
+        let usage =
+            format!("pub def identity: Fn({applied}) -> {applied} = fn(value) {{ value }};");
+        let source = format!("{declaration}\n{usage}");
+        let (_directory, _, state, uri) = semantic_fixture(&source).await;
+        let snapshot = state
+            .borrow()
+            .workspace
+            .as_ref()
+            .unwrap()
+            .published()
+            .unwrap();
+        assert!(
+            snapshot.mir.diagnostics.is_empty(),
+            "{name}: {:?}",
+            snapshot.mir.diagnostics
+        );
+        for (line, character) in [
+            (0, declaration.find(name).unwrap() as u32),
+            (
+                declaration.lines().count() as u32,
+                usage.find(name).unwrap() as u32,
+            ),
+        ] {
+            let hover: Option<lsp::Hover> = serde_json::from_value(
+                dispatch_request(
+                    Rc::clone(&state),
+                    request(
+                        100,
+                        lsp::request::HoverRequest::METHOD,
+                        serde_json::json!({
+                            "textDocument": { "uri": uri },
+                            "position": { "line": line, "character": character }
+                        }),
+                    ),
+                )
+                .await
+                .unwrap(),
+            )
+            .unwrap();
+            let hover = hover.expect("type hover");
+            assert_eq!(
+                hover.contents,
+                lsp::HoverContents::Scalar(lsp::MarkedString::LanguageString(
+                    lsp::LanguageString {
+                        language: "telora".to_owned(),
+                        value: declaration.to_owned(),
+                    }
+                )),
+                "{name}"
+            );
+            assert_eq!(hover.range.unwrap().start.line, line);
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn type_hover_uses_cross_module_identity_and_unsaved_source() {
+    let (_directory, root, state) = fixture();
+    let model = root.join("src/model.telora");
+    let main = root.join("src/main.telora");
+    std::fs::write(&model, "pub type Item = struct { stale: Int };").unwrap();
+    let current = "pub type Item = struct { current: String };";
+    let source = "use crate::model::{Item as Renamed};\npub def identity: Fn(Renamed) -> Renamed = fn(value) { value };";
+    initialize_state(&root, &state);
+    let workspace = Rc::new(Workspace::new(&main).unwrap());
+    workspace.open(&model, DocumentVersion(2), current).unwrap();
+    workspace.open(&main, DocumentVersion(1), source).unwrap();
+    let context = workspace.context();
+    let snapshot = workspace.rebuild(&context).await.unwrap();
+    assert!(
+        snapshot.mir.diagnostics.is_empty(),
+        "{:?}",
+        snapshot.mir.diagnostics
+    );
+    state.borrow_mut().workspace = Some(workspace);
+    let uri = lsp::Url::from_file_path(&main).unwrap();
+    let hover: Option<lsp::Hover> = serde_json::from_value(
+        dispatch_request(
+            state,
+            request(
+                101,
+                lsp::request::HoverRequest::METHOD,
+                serde_json::json!({
+                    "textDocument": { "uri": uri }, "position": { "line": 1, "character": 23 }
+                }),
+            ),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        hover.unwrap().contents,
+        lsp::HoverContents::Scalar(lsp::MarkedString::LanguageString(lsp::LanguageString {
+            language: "telora".to_owned(),
+            value: current.to_owned(),
+        }))
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn hover_reports_an_ordinary_expression_type() {
     let (_directory, _, state, uri) =
         semantic_fixture("let count = 1 + 2;\npub use self::{ count as output };").await;
