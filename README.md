@@ -103,6 +103,25 @@ serve 通过 JSONL 或 HTTP 处理请求。每次调用从同一初始化状态�
 带 `--only-types` 时停在类型闭合阶段，否则完成整图初始化，不调度 entry。
 空集合检查成功；JSON summary 的 `roots` 列出按名称排序的根模块。
 
+## 源码格式化
+
+`fmt` 只解析语法，不要求 workspace 配置、依赖解析或代码执行。
+
+```bash
+telora fmt src tests                   # 递归格式化 .telora 文件，原地写入
+telora fmt                            # 从当前目录递归格式化
+telora fmt --check src tests           # 只检查；需要格式化时退出码为 1
+telora fmt --stdout src/lib.telora     # 单文件输出到 stdout，源文件不变
+cat src/lib.telora | telora fmt -      # stdin / stdout，可用于编辑器格式化
+telora fmt --width 80 src/lib.telora   # 默认目标行宽 100
+```
+
+格式使用 4 空格缩进和 LF 换行；保留注释、字符串（包括 raw、插值字符串）
+的内容及原有 token。目标行宽控制集合、参数等可拆分结构，字面量和不可拆分的
+表达式可超过目标行宽。格式化后重新解析并核对语法结构，保证重复运行结果不变。
+一批文件全部通过解析和格式化验证后才开始逐文件替换，单文件通过同目录临时文件
+原子替换并保留权限。递归扫描跳过隐藏条目、`target`、`node_modules` 和符号链接。
+
 ## 语言模型
 
 ### 值与表达式

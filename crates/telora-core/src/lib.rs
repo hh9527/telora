@@ -20,6 +20,7 @@ pub mod module_format;
 pub mod module_resolve;
 pub mod options;
 pub mod package;
+pub mod source_format;
 pub mod static_sources;
 pub mod symbol_resolve;
 pub mod type_resolve;

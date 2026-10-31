@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use telora_core::DataLimits;
 mod build_cli;
 mod eval_cli;
+mod fmt_cli;
 mod source_arg;
 mod static_cli;
 mod wasm_cli;
@@ -130,6 +131,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Format Telora source files without resolving imports or executing code.
+    Fmt(fmt_cli::FmtArgs),
     /// Compile MainService to a portable Wasm file (experimental publication format).
     Build(build_cli::BuildArgs),
     /// Evaluate one exported Value without an Entry or effect system.
@@ -342,6 +345,7 @@ fn parse_module_selector(value: &str) -> Result<ModuleSelector, String> {
 fn run_cli(cli: Cli) -> Result<i32, String> {
     let context = command_context(cli.context)?;
     match cli.command {
+        Command::Fmt(arguments) => fmt_cli::run(context, arguments),
         Command::Build(arguments) => build_cli::execute(context, arguments),
         Command::Eval(arguments) => eval_cli::run(context, arguments),
         Command::Run(arguments) => {
