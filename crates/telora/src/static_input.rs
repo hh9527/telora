@@ -553,11 +553,15 @@ impl Inventory {
             return None;
         }
         let mut graph_roots = roots.to_vec();
-        if !roots.is_empty()
-            && self.entries.contains_key(&self.owner)
-            && !graph_roots.contains(&self.owner)
-        {
-            graph_roots.push(self.owner.clone());
+        // Load each declaring crate root so `crate::` imports see the
+        // bindings from its module declarations, including across editor roots.
+        for root in roots {
+            let owner = root
+                .split_once('/')
+                .map_or(root.as_str(), |(owner, _)| owner);
+            if self.entries.contains_key(owner) && !graph_roots.iter().any(|root| root == owner) {
+                graph_roots.push(owner.to_owned());
+            }
         }
         let specs = self
             .entries

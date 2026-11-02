@@ -299,6 +299,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn open_documents_resolve_each_declaring_crate_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("telora-config.json"),
+            r#"{"version":1,"members":["first","second"]}"#,
+        )
+        .unwrap();
+        for name in ["first", "second"] {
+            let root = dir.path().join(name);
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            std::fs::write(
+                root.join("telora-crate.json"),
+                format!(r#"{{"name":"{name}","dependencies":[]}}"#),
+            )
+            .unwrap();
+            std::fs::write(
+                root.join("src/lib.telora"),
+                "pub mod groups; pub mod units;",
+            )
+            .unwrap();
+            std::fs::write(root.join("src/units.telora"), "pub def value: Int = 42;").unwrap();
+            std::fs::write(
+                root.join("src/groups.telora"),
+                "use crate::units as units; pub def result: Int = units::value;",
+            )
+            .unwrap();
+        }
+        let spec = telora_core::WorkspaceSpec::discover(dir.path()).unwrap();
+        spec.write_lock(&spec.generate_lock(&BTreeMap::new()).unwrap())
+            .unwrap();
+        for (first, second) in [("first", "second"), ("second", "first")] {
+            let root = dir.path().join(first).join("src/groups.telora");
+            let workspace = Workspace::new(&root).unwrap();
+            let other = dir.path().join(second).join("src/groups.telora");
+            workspace
+                .open(
+                    &other,
+                    DocumentVersion(1),
+                    std::fs::read_to_string(&other).unwrap(),
+                )
+                .unwrap();
+            let snapshot = workspace.rebuild(&workspace.context()).await.unwrap();
+            assert!(
+                snapshot.mir.diagnostics.is_empty(),
+                "{:?}",
+                snapshot.mir.diagnostics
+            );
+            assert!(snapshot.module_by_path(&other).is_some());
+        }
+    }
+
+    #[tokio::test]
     async fn overlays_and_all_open_roots_share_one_static_graph() {
         let dir = fixture();
         let workspace = Workspace::new(dir.path().join("src/main.telora")).unwrap();
