@@ -221,7 +221,11 @@ impl Formatter<'_> {
             return Doc::text("");
         }
         if a == "," {
-            return if hard { Doc::hard() } else { Doc::line(" ") };
+            return if hard {
+                self.statement_break(left, right)
+            } else {
+                Doc::line(" ")
+            };
         }
         if a == ";" {
             return Doc::hard();
@@ -390,6 +394,19 @@ mod tests {
         assert_eq!(
             formatted("use std::value::{ Value }; @display_by(\"x\") pub type X=struct{v:Int};"),
             "use std::value::{Value};\n@display_by(\"x\")\npub type X = struct {\n    v: Int\n};\n"
+        );
+    }
+    #[test]
+    fn decorated_fields_preserve_existing_blank_lines() {
+        assert_eq!(
+            formatted(
+                "@prop1()\ntype A = struct {\n\n    @prop2()\n    a: Int,\n\n\n    @prop3()\n    @prop4()\n    b: Int,\n};\n\n@prop5()\ntype B = struct(Int);"
+            ),
+            "@prop1()\ntype A = struct {\n    @prop2()\n    a: Int,\n\n    @prop3()\n    @prop4()\n    b: Int,\n};\n\n@prop5()\ntype B = struct(Int);\n"
+        );
+        assert_eq!(
+            formatted("type A = struct { @prop1() a: Int, @prop2() b: Int, };"),
+            "type A = struct {\n    @prop1()\n    a: Int,\n    @prop2()\n    b: Int,\n};\n"
         );
     }
     #[test]
