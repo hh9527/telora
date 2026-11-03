@@ -63,6 +63,22 @@ def distinct_items: for(A) Fn(Array(A), Fn(A) -> String) -> Array(A) = fn(items,
 def distinct_by: for(A) Fn(Fn(A) -> String) -> Fn(Node(A)) -> Node(A) = fn(key) {
     fn(source) { node(fn(run) { distinct_items(source.evaluate(run), key) }) }
 };
+# 与 distinct_by 保持相同顺序；重复 key 是当前节点的初始化错误。
+def unique_by: for(A) Fn(Fn(A) -> String) -> Fn(Node(A)) -> Node(A) = fn(key) {
+    fn(source) { node(fn(run) {
+        let items = source.evaluate(run);
+        let unique = distinct_items(items, key);
+        if arrays::length(items) == arrays::length(unique) { unique } else {
+            let duplicate = arrays::find(arrays::enumerate(items), fn(pair) {
+                pair.0 >= arrays::length(unique) || key(pair.1) != key(unique[pair.0])
+            });
+            match duplicate {
+                Some(pair) => fail!("duplicate key in unique_by", key(pair.1)),
+                None => fail!("duplicate key in unique_by")
+            }
+        }
+    }) }
+};
 def cache: for(A) Fn() -> Fn(Node(A)) -> Node(A) = fn() {
     fn(source) {
         let permanent = new_run();
@@ -98,7 +114,7 @@ def both: for(A, B) Fn(Output(A), Output(B)) -> Output((A, B)) = fn(left, right)
     {evaluate: fn(run) { (left.evaluate(run), right.evaluate(run)) }}.ty!(Output((A, B)))
 };
 def run: for(R) Fn(Output(R)) -> R = fn(output) { output.evaluate(new_run()) };
-pub use self::{Node, Output, from_array, map, filter, filter_map, merge, distinct_by, cache, collect, collect_dict, collect_string, both, run};
+pub use self::{Node, Output, from_array, map, filter, filter_map, merge, distinct_by, unique_by, cache, collect, collect_dict, collect_string, both, run};
 
 use std::map as maps;
 def collect_map: for(A,K,V) Fn(Fn(A)->K,Fn(A)->V)->Fn(Node(A))->Output(Map(K,V)) = fn(key,value){

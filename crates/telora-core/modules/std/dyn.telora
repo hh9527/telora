@@ -30,7 +30,7 @@ native check_string: Fn(Dyn) -> Option(String);
 native check_bytes: Fn(Dyn) -> Option(Bytes);
 type AccessError = struct {message: String, value: Dyn};
 native field_raw: Fn(Dyn, String) -> Result(Dyn, String);
-native fields_raw: Fn(Dyn) -> Result(Array(Tuple([String, Dyn])), String);
+native fields_raw: Fn(Dyn) -> Result(Array((String, Dyn)), String);
 native array_items_raw: Fn(Dyn) -> Result(Array(Dyn), String);
 native tuple_items_raw: Fn(Dyn) -> Result(Array(Dyn), String);
 native tag_raw: Fn(Dyn) -> Result(String, String);
@@ -44,7 +44,7 @@ def checked: for(A) Fn(Dyn, Result(A, String)) -> Result(A, AccessError) = fn(va
 def field: Fn(Dyn, String) -> Result(Dyn, AccessError) = fn(value, name) {
     checked(value, field_raw(value, name))
 };
-def fields: Fn(Dyn) -> Result(Array(Tuple([String, Dyn])), AccessError) = fn(value) {
+def fields: Fn(Dyn) -> Result(Array((String, Dyn)), AccessError) = fn(value) {
     checked(value, fields_raw(value))
 };
 def array_items: Fn(Dyn) -> Result(Array(Dyn), AccessError) = fn(value) {

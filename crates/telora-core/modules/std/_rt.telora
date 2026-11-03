@@ -10,11 +10,11 @@ type Diagnostic = struct {
 
 native call_with_diagnostics:
     for(A, R) Fn(Fn(A) -> R, A, TypeOf(Diagnostic), TypeOf(Severity), TypeOf(SourceRange))
-        -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic));
+        -> Result((R, Array(Diagnostic)), Array(Diagnostic));
 
 def with_diagnostics:
     for(A, R) Fn(Fn(A) -> R)
-        -> Fn(A) -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic)) =
+        -> Fn(A) -> Result((R, Array(Diagnostic)), Array(Diagnostic)) =
     fn(callable) { fn(argument) { call_with_diagnostics(callable, argument, (Diagnostic).type, (Severity).type, (SourceRange).type) } };
 
 native publish_service_metadata: Fn(String, String) -> Bool;

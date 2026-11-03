@@ -22,7 +22,7 @@ native from_string: Fn(String) -> Fmt;
 native from_int: Fn(Int) -> Fmt;
 native from_float: Fn(Float) -> Fmt;
 native concat: Fn(Array(String), Array(Fmt)) -> Fmt;
-native prepare: Fn(String) -> Tuple([Array(String), Array(String)]);
+native prepare: Fn(String) -> (Array(String), Array(String));
 
 type DisplayTemplate = struct { strings: Array(String), fields: Array(String) };
 @property(PropertyTarget::Type)

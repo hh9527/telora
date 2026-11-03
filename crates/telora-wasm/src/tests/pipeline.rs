@@ -225,3 +225,30 @@ pub def answer: Fn() -> Array(Int) = build::stage(fn() {
         }
     }
 }
+
+#[test]
+fn pipeline_unique_by_preserves_order_and_reports_duplicate_keys() {
+    let source = r#"
+use std::pipeline as p;
+use std::diagnostics as diagnostics;
+use std::string as strings;
+pub def answer: Fn(Array(String)) -> String = fn(input) {
+    match diagnostics::with_diagnostics(fn(value: Array(String)) {
+        p::run(p::from_array(value) |> p::unique_by(fn(key) {key}) |> p::collect())
+    })(input) {
+        Ok((values, _)) => strings::join(values, ","),
+        Err(reports) => reports[0].message
+    }
+};
+"#;
+    let bytes = compile(source).unwrap();
+    let mut s = crate::session::Session::load(&bytes, 500_000_000).unwrap();
+    s.initialize().unwrap();
+    assert_eq!(s.call(&[serde_json::json!([])]).unwrap(), serde_json::json!(""));
+    assert_eq!(s.call(&[serde_json::json!(["b", "a"])]).unwrap(), serde_json::json!("b,a"));
+    for values in [serde_json::json!(["x", "x", "y"]), serde_json::json!(["x", "y", "x"])] {
+        let result = s.call(&[values]).unwrap();
+        assert!(result.as_str().unwrap().contains("duplicate key in unique_by"));
+    }
+    assert_eq!(s.call(&[serde_json::json!(["x", "y"])]).unwrap(), serde_json::json!("x,y"));
+}
