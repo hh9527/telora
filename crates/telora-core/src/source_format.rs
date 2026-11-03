@@ -142,12 +142,12 @@ impl Formatter<'_> {
                         let hard = matches!(
                             node.kind(),
                             "block"
-                                | "struct_initializer"
                                 | "enum_initializer"
                                 | "trait_binding"
                                 | "impl_binding"
                                 | "match_expr"
-                        );
+                        ) || node.kind() == "struct_initializer"
+                            && self.text(nodes[open]) == "{";
                         let boundary = if hard { Doc::hard() } else { Doc::line("") };
                         docs.push(
                             Doc::concat(vec![
@@ -390,6 +390,17 @@ mod tests {
         assert_eq!(
             formatted("use std::value::{ Value }; @display_by(\"x\") pub type X=struct{v:Int};"),
             "use std::value::{Value};\n@display_by(\"x\")\npub type X = struct {\n    v: Int\n};\n"
+        );
+    }
+    #[test]
+    fn newtype_structs_stay_inline() {
+        assert_eq!(
+            formatted("type A = struct(InnerType);"),
+            "type A = struct(InnerType);\n"
+        );
+        assert_eq!(
+            formatted("pub type A = struct(\n    Option(InnerType)\n);"),
+            "pub type A = struct(Option(InnerType));\n"
         );
     }
     #[test]
