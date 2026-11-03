@@ -19,7 +19,7 @@ use serde::de::DeserializeOwned;
 use telora_core::{
     CancellationToken, DocumentVersion, Location, PositionEncoding, QueryError, TextEdit,
     TextPosition, TextRange,
-    mir::{SymbolId, SymbolKind, TypeState},
+    mir::{ModuleState, SymbolId, SymbolKind, TypeState},
     mir_query::MemberKind,
     syntax::kinds::BindingKind,
 };
@@ -273,7 +273,19 @@ async fn semantic_request(
             request_location(&snapshot, &params.text_document_position_params, encoding)?;
         let target = query
             .target_at(location)
-            .and_then(|definition| query.definition_locations(definition).next())
+            .and_then(
+                |definition| match snapshot.mir.symbols[definition.index()].kind {
+                    SymbolKind::Namespace(module) => {
+                        match &snapshot.mir.modules[module.index()].state {
+                            ModuleState::Source { source, .. } => {
+                                Some(Location::new(*source, TextRange::at(0)))
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => query.definition_locations(definition).next(),
+                },
+            )
             .and_then(|location| to_location(&snapshot, location, encoding));
         return encode(target.map(lsp::GotoDefinitionResponse::Scalar));
     }

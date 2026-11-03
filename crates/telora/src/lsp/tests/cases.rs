@@ -1042,3 +1042,44 @@ async fn main_loop_completes_initialize_shutdown_and_exit() {
     assert!(output.contains("\"id\":2"));
     assert!(output.contains("\"result\":null"));
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn module_definitions_jump_to_the_resolved_source_files() {
+    let (_directory, root, state) = fixture();
+    std::fs::write(root.join("src/lib.telora"), "mod model;\nmod missing;").unwrap();
+    std::fs::write(root.join("src/model.telora"), "pub mod nested;").unwrap();
+    std::fs::create_dir(root.join("src/model")).unwrap();
+    std::fs::write(root.join("src/model/nested.telora"), "").unwrap();
+    initialize_state(&root, &state);
+    let workspace = Rc::new(Workspace::new(&root.join("src/lib.telora")).unwrap());
+    workspace.rebuild(&workspace.context()).await.unwrap();
+    state.borrow_mut().workspace = Some(workspace);
+    for (id, source, line, character, target) in [
+        (101, "lib", 0, 5, Some("model")),
+        (102, "model", 0, 9, Some("model/nested")),
+        (103, "lib", 1, 5, None),
+    ] {
+        let response: Option<lsp::GotoDefinitionResponse> = serde_json::from_value(
+            dispatch_request(
+                Rc::clone(&state),
+                request(id, lsp::request::GotoDefinition::METHOD, serde_json::json!({
+                    "textDocument": { "uri": lsp::Url::from_file_path(root.join(format!("src/{source}.telora"))).unwrap() },
+                    "position": { "line": line, "character": character }
+                })),
+            ).await.unwrap(),
+        ).unwrap();
+        match target {
+            Some(target) => {
+                let Some(lsp::GotoDefinitionResponse::Scalar(location)) = response else {
+                    panic!("expected module source location for {source}");
+                };
+                assert_eq!(
+                    location.uri,
+                    lsp::Url::from_file_path(root.join(format!("src/{target}.telora"))).unwrap()
+                );
+                assert_eq!(location.range, lsp::Range::default());
+            }
+            None => assert!(response.is_none()),
+        }
+    }
+}
