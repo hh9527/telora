@@ -489,6 +489,15 @@ fn service_type_can_be_reexported_across_modules() {
         runtime_source("transform-reexport.telora"),
     )
     .unwrap();
+    let output = telora(&cwd)
+        .args(["check", "@src/main", "--only-types"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let mut command = telora(&cwd);
     command.args(["run", "@src/main"]);
     let output = input_command(command, method_request("42").as_bytes());
@@ -498,6 +507,22 @@ fn service_type_can_be_reexported_across_modules() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), 42);
+
+    let output = telora(&cwd)
+        .args(["build", "@src/main", "-o", "reexport.wasm"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let artifact = fs::read(cwd.join("reexport.wasm")).unwrap();
+    let mut runner = telora_run::Runner::load(&artifact, telora_run::Options::default()).unwrap();
+    assert!(runner.initialize(&[]).unwrap().is_empty());
+    let response: Value =
+        serde_json::from_slice(&runner.request(method_request("42").as_bytes()).unwrap()).unwrap();
+    assert_eq!(response["ok"], 42);
 }
 
 #[test]
