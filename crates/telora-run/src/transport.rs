@@ -2,7 +2,7 @@
 mod http;
 use anyhow::{Result, bail};
 use std::{
-    io::{BufRead, Write},
+    io::{BufRead, Read, Write},
     net::SocketAddr,
     path::PathBuf,
     str::FromStr,
@@ -11,6 +11,7 @@ use std::{
 #[derive(Clone, Debug)]
 pub enum Bind {
     Stdio,
+    LocatedStdio,
     Http(SocketAddr),
     Unix(PathBuf),
 }
@@ -18,6 +19,9 @@ pub enum Bind {
 impl FromStr for Bind {
     type Err = String;
     fn from_str(value: &str) -> Result<Self, String> {
+        if value == "stdio+located://" {
+            return Ok(Self::LocatedStdio);
+        }
         if value == "stdio+jsonl://" {
             return Ok(Self::Stdio);
         }
@@ -36,7 +40,7 @@ impl FromStr for Bind {
             }
             return Ok(Self::Unix(path.into()));
         }
-        Err("expected stdio+jsonl://, http://IP:PORT or http+unix:///absolute/path.sock".into())
+        Err("expected stdio+jsonl://, stdio+located://, http://IP:PORT or http+unix:///absolute/path.sock".into())
     }
 }
 
@@ -54,6 +58,12 @@ pub fn serve(
     mut transform: impl FnMut(&[u8]) -> Result<Vec<u8>>,
 ) -> Result<()> {
     match bind {
+        Bind::LocatedStdio => serve_frames(
+            std::io::stdin().lock(),
+            std::io::stdout().lock(),
+            limit,
+            transform,
+        ),
         Bind::Stdio => {
             let stdin = std::io::stdin();
             let mut input = stdin.lock();
@@ -98,5 +108,50 @@ pub fn serve(
             }
             http::serve(bind, limit, transform)
         }
+    }
+}
+
+/// Each request is a u32 little-endian length followed by TLI1 bytes; replies
+/// use the same framing around the ordinary UTF-8 service response JSON.
+fn serve_frames(
+    mut input: impl Read,
+    mut output: impl Write,
+    limit: usize,
+    mut transform: impl FnMut(&[u8]) -> Result<Vec<u8>>,
+) -> Result<()> {
+    loop {
+        let mut size = [0u8; 4];
+        if input.read(&mut size[..1])? == 0 {
+            return Ok(());
+        }
+        input.read_exact(&mut size[1..])?;
+        let length = u32::from_le_bytes(size) as usize;
+        anyhow::ensure!(length <= limit, "request exceeds input size limit");
+        let mut bytes = vec![0; length];
+        input.read_exact(&mut bytes)?;
+        let reply = transform(&bytes)?;
+        let size = u32::try_from(reply.len())?;
+        output.write_all(&size.to_le_bytes())?;
+        output.write_all(&reply)?;
+        output.flush()?;
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    #[test]
+    fn frames_preserve_binary_newlines_and_request_boundaries() {
+        let mut input = Vec::new();
+        for bytes in [b"TLI1\n\0".as_slice(), b"TLI2".as_slice()] {
+            input.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            input.extend_from_slice(bytes);
+        }
+        let mut output = Vec::new();
+        serve_frames(input.as_slice(), &mut output, 64, |b| Ok(b.to_vec())).unwrap();
+        assert_eq!(input, output);
+        assert!(serve_frames(&input[..2], Vec::new(), 64, |b| Ok(b.to_vec())).is_err());
+        assert!(serve_frames(&input[..7], Vec::new(), 64, |b| Ok(b.to_vec())).is_err());
+        assert!(serve_frames(input.as_slice(), Vec::new(), 1, |b| Ok(b.to_vec())).is_err());
     }
 }

@@ -14,7 +14,10 @@ const INPUT_LIMIT: usize = 256 * 1024 * 1024;
 )]
 pub struct Cli {
     pub artifact: PathBuf,
-    /// Serve stdio+jsonl://, http://IP:PORT or http+unix:///absolute/path.sock.
+    /// Read a binary TLI1 structured input from stdin (one-shot mode).
+    #[arg(long, conflicts_with = "serve")]
+    located_input: bool,
+    /// Serve stdio+jsonl://, stdio+located://, http://IP:PORT or http+unix:///absolute/path.sock.
     #[arg(long, value_name = "URI")]
     serve: Option<telora_run::transport::Bind>,
     /// NAME=PATH or NAME=file+json://PATH (also yaml/toml).
@@ -119,8 +122,13 @@ fn failure(message: &str) -> Vec<u8> {
     .expect("JSON value is serializable")
 }
 
-fn reply(runner: &mut Runner, input: &[u8]) -> Vec<u8> {
-    let response = runner.request(input).and_then(|bytes| {
+fn reply(runner: &mut Runner, input: &[u8], located: bool) -> Vec<u8> {
+    let response = (if located {
+        runner.request_located(input)
+    } else {
+        runner.request(input)
+    })
+    .and_then(|bytes| {
         let value: Reply<'_> = serde_json::from_slice(&bytes)?;
         ensure!(
             value.schema == "telora.service/v1",
@@ -167,7 +175,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
     let mut stdout = stdout.lock();
     if cli.serve.is_none() {
         let input = read_limited(stdin)?;
-        let response = reply(&mut runner, &input);
+        let response = reply(&mut runner, &input, cli.located_input);
         let response: Reply<'_> = serde_json::from_slice(&response)?;
         for d in &response.diagnostics {
             diagnostic(d)?;
@@ -187,8 +195,10 @@ pub fn execute(cli: Cli) -> Result<i32> {
     }
     drop(stdout);
     drop(stdin);
-    telora_run::transport::serve(cli.serve.unwrap(), INPUT_LIMIT, |input| {
-        let response = reply(&mut runner, input);
+    let bind = cli.serve.unwrap();
+    let located = matches!(bind, telora_run::transport::Bind::LocatedStdio);
+    telora_run::transport::serve(bind, INPUT_LIMIT, |input| {
+        let response = reply(&mut runner, input, located);
         if cli.report_usage {
             usage(&mut runner)?;
         }

@@ -344,6 +344,14 @@ impl TransformSession {
     }
 
     pub fn transform(&mut self, input: &[u8]) -> Result<Vec<u8>, String> {
+        self.transform_input(input, false)
+    }
+
+    pub fn transform_located(&mut self, input: &[u8]) -> Result<Vec<u8>, String> {
+        self.transform_input(input, true)
+    }
+
+    fn transform_input(&mut self, input: &[u8], located: bool) -> Result<Vec<u8>, String> {
         if !self.ready || self.poisoned {
             return Err("service requires initialization or reset".into());
         }
@@ -358,7 +366,11 @@ impl TransformSession {
         let mut quota = crate::fuel_quota::FuelQuota::new(self.session.fuel_budget);
         let called = quota.call(
             &mut self.session.store,
-            self.session.exports.run_service,
+            if located {
+                self.session.exports.run_service_located
+            } else {
+                self.session.exports.run_service
+            },
             (pointer, length, 1, 0, result),
         );
         self.session.metered_fuel = Some(quota.consumed());

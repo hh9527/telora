@@ -7,6 +7,7 @@ mod input;
 pub mod transport;
 use anyhow::{Result, ensure};
 pub use artifact::Publication;
+pub use telora_wasm_shared::located_input;
 
 #[derive(Debug)]
 pub struct InitializationError {
@@ -234,6 +235,15 @@ impl Runner {
     }
 
     pub fn request(&mut self, input: &[u8]) -> Result<Vec<u8>> {
+        self.request_input(input, false)
+    }
+
+    /// Execute a TLI1 packet carrying temporary input byte ranges.
+    pub fn request_located(&mut self, input: &[u8]) -> Result<Vec<u8>> {
+        self.request_input(input, true)
+    }
+
+    fn request_input(&mut self, input: &[u8], located: bool) -> Result<Vec<u8>> {
         ensure!(self.ready, "service needs initialization");
         let reset_start = Instant::now();
         self.reset()?;
@@ -242,7 +252,7 @@ impl Runner {
         self.guest.store.set_fuel(self.request_fuel)?;
         let now = Instant::now();
         let mut quota = fuel_quota::FuelQuota::new(self.request_fuel);
-        let result = self.guest.request_with_quota(input, &mut quota);
+        let result = self.guest.request_with_quota(input, located, &mut quota);
         self.request_fuel_consumed = quota.consumed();
         self.timings.request_ms = now.elapsed().as_secs_f64() * 1000.;
         if result.is_ok() {

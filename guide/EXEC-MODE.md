@@ -64,6 +64,8 @@ Context 只有 `sources: Dict(Value)`。没有隐式环境变量、字符串参�
 来源诊断使用 `@service/name`；逐次请求输入不注册独立的来源路径。
 物理文件位置只属于 Host，不进入数据来源身份。
 
+结构化宿主可以直接提供值和临时来源 offset；Rust/Wasm 入口、常驻 stdio 帧及编码见 [结构化输入](LOCATED-INPUT.md)。
+
 顺序为：模块与 property 初始化 → 准备来源 → 逐字段 init → 固定集合实例 → 按路由 transform。
 每次 transform 都从同一初始化状态开始；服务间隙 reset 执行环境，保证干净、确定的
 起点，不重新读取外部来源。初始化对象通过长期根保活，请求结束清理调用状态，

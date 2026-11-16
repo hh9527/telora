@@ -69,6 +69,7 @@ mod interpreters;
 mod json_ops;
 mod literal_pairs;
 mod local_instances;
+pub mod located_input;
 mod map_order;
 mod natives;
 pub mod object;

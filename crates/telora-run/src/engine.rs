@@ -12,6 +12,7 @@ pub(crate) struct Exports {
     pub name: TypedFunc<(u32, u32), ()>,
     pub set: TypedFunc<(u32, u32, u32, u32), ()>,
     pub create: TypedFunc<(), i32>,
+    pub run_located: TypedFunc<(u32, u32, u32, u32, u32), ()>,
     pub run: TypedFunc<(u32, u32, u32, u32, u32), ()>,
     pub reset: TypedFunc<(), ()>,
     pub diagnostics: TypedFunc<(u32, u32, u32), ()>,
@@ -61,6 +62,7 @@ impl Guest {
             set: instance.get_typed_func(&mut store, "set-data-source")?,
             create: instance.get_typed_func(&mut store, "create-service")?,
             run: instance.get_typed_func(&mut store, "run-service")?,
+            run_located: instance.get_typed_func(&mut store, "run-service-located")?,
             reset: instance.get_typed_func(&mut store, "reset-service")?,
             diagnostics: instance.get_typed_func(&mut store, "get-service-diagnostics")?,
             heap_bytes: instance.get_typed_func(&mut store, "telora_heap_bytes")?,
@@ -129,13 +131,18 @@ impl Guest {
     pub fn request_with_quota(
         &mut self,
         bytes: &[u8],
+        located: bool,
         quota: &mut crate::fuel_quota::FuelQuota,
     ) -> Result<Vec<u8>> {
         let ptr = self.transfer(bytes)?;
         let result = self.alloc(12, 4)?;
         quota.call(
             &mut self.store,
-            self.exports.run,
+            if located {
+                self.exports.run_located
+            } else {
+                self.exports.run
+            },
             (ptr, u32::try_from(bytes.len())?, 1, 0, result),
         )?;
         self.free(ptr, bytes.len(), 1)?;

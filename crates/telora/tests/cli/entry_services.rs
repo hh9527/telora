@@ -1199,3 +1199,109 @@ fn buildtime_limits_are_independent_of_published_runtime_limits() {
     );
     fs::remove_dir_all(cwd).unwrap();
 }
+
+#[test]
+fn standalone_runner_accepts_located_requests_and_preserves_dynamic_offsets() {
+    use telora_run::located_input::{Field, InputValue, LocatedValue, Span};
+    let cwd = service_fixture();
+    let build = telora(&cwd)
+        .args(["build", "@src/main", "-o", "located.wasm"])
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bytes = fs::read(cwd.join("located.wasm")).unwrap();
+    let mut runner = telora_run::Runner::load(&bytes, Default::default()).unwrap();
+    assert!(runner.initialize(&[]).unwrap().is_empty());
+    let packet = |value: InputValue| {
+        LocatedValue {
+            span: None,
+            value: InputValue::Object(vec![
+                Field {
+                    name: "method".into(),
+                    span: None,
+                    value: LocatedValue {
+                        span: None,
+                        value: InputValue::String("transform".into()),
+                    },
+                },
+                Field {
+                    name: "input".into(),
+                    span: None,
+                    value: LocatedValue {
+                        span: Some(Span { start: 0, end: 7 }),
+                        value,
+                    },
+                },
+            ]),
+        }
+        .encode()
+        .unwrap()
+    };
+    for _ in 0..3 {
+        let malformed: Value =
+            serde_json::from_slice(&runner.request_located(b"TLI2").unwrap()).unwrap();
+        assert_eq!(malformed["error"], true);
+        let reply: Value =
+            serde_json::from_slice(&runner.request_located(&packet(InputValue::Null)).unwrap())
+                .unwrap();
+        assert_eq!(reply["error"], true);
+        assert_eq!(reply["diagnostics"][0]["message"], "missing input");
+        assert!(
+            reply["diagnostics"][0]["locs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|l| l["source"] == "<input>"
+                    && l["start"]["line"] == 0
+                    && l["start"]["offset"] == 0
+                    && l["end"]["offset"] == 7),
+            "{reply}"
+        );
+        let reply: Value = serde_json::from_slice(
+            &runner
+                .request_located(&packet(InputValue::Int(i64::MAX)))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reply["ok"], serde_json::json!(i64::MAX));
+    }
+    let reply: Value =
+        serde_json::from_slice(&runner.request(method_request("42").as_bytes()).unwrap()).unwrap();
+    assert_eq!(reply["ok"], 42);
+    // Exercise the persistent public command, including binary frame boundaries.
+    let mut child = telora(&cwd)
+        .args(["run", "@src/main", "--serve", "stdio+located://"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().unwrap();
+        for input in [packet(InputValue::Null), packet(InputValue::Int(i64::MAX))] {
+            stdin
+                .write_all(&(input.len() as u32).to_le_bytes())
+                .unwrap();
+            stdin.write_all(&input).unwrap();
+        }
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut bytes = output.stdout.as_slice();
+    for error in [true, false] {
+        let size = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+        let reply: Value = serde_json::from_slice(&bytes[4..4 + size]).unwrap();
+        assert_eq!(reply["error"], error, "{reply}");
+        bytes = &bytes[4 + size..];
+    }
+    assert!(bytes.is_empty());
+}

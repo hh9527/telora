@@ -85,7 +85,7 @@ pub(crate) fn execute(
     let stdin = std::io::stdin();
     if bind.is_none() {
         let input = crate::source_arg::read_limited(stdin.lock(), limits.file_size, "query input")?;
-        let response = transform(&mut service, &input);
+        let response = transform(&mut service, &input, false);
         if let Some(report) = usage_reporter {
             report(service.usage());
         }
@@ -102,8 +102,10 @@ pub(crate) fn execute(
         write_json(reply.ok.get().as_bytes())?;
         return Ok(0);
     }
-    telora_run::transport::serve(bind.unwrap(), limits.file_size, |input| {
-        let response = transform(&mut service, input);
+    let bind = bind.unwrap();
+    let located = matches!(bind, telora_run::transport::Bind::LocatedStdio);
+    telora_run::transport::serve(bind, limits.file_size, |input| {
+        let response = transform(&mut service, input, located);
         if let Some(report) = usage_reporter {
             report(service.usage());
         }
@@ -129,14 +131,18 @@ fn write_json(bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-fn transform(service: &mut TransformSession, input: &[u8]) -> Vec<u8> {
+fn transform(service: &mut TransformSession, input: &[u8], located: bool) -> Vec<u8> {
     let result = (|| {
         {
             let _timer = PhaseTimer::new("request_reset");
             service.reset()?;
         }
         let _timer = PhaseTimer::new("request_transform");
-        let result = service.transform(input);
+        let result = if located {
+            service.transform_located(input)
+        } else {
+            service.transform(input)
+        };
         for event in service.session().take_debug_events()? {
             crate::emit_stderr(serde_json::to_value(event).map_err(|e| e.to_string())?)?;
         }

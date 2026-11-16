@@ -1146,6 +1146,7 @@ mod column_map;
 mod collection_alias;
 mod format_fusion;
 mod literal_pairs;
+mod located_input;
 mod text_writer;
 
 mod collection_space;

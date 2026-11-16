@@ -58,14 +58,14 @@ fn main() {
     let no_stack_first = String::from_utf8_lossy(&help.stdout)
         .split_whitespace()
         .any(|word| word == "--no-stack-first");
-    let exports = "get-data-source-count get-data-source-name set-data-source create-service run-service get-service-diagnostics telora_service_bootstrap mem-alloc mem-free mem-realloc telora_alloc telora_invoke telora_table_push telora_table_get telora_freeze
+    let exports = "get-data-source-count get-data-source-name set-data-source create-service run-service run-service-located get-service-diagnostics telora_service_bootstrap mem-alloc mem-free mem-realloc telora_alloc telora_invoke telora_table_push telora_table_get telora_freeze
         telora_string_compare telora_source_name telora_subject_label telora_sort_pairs
         telora_duplicate_key_message telora_text_query telora_text_build telora_text_split
         telora_path telora_format_render telora_format_message telora_format_join
         telora_template_prepare telora_member_message telora_regex telora_hash
         telora_service_context telora_service_sources_prepare telora_service_source_count telora_service_source_name
         telora_service_source_parse telora_service_source_store telora_service_sources_seal
-        telora_parse_data telora_json_write telora_json_parse telora_toml_parse telora_yaml_parse
+        telora_parse_data telora_import_located telora_json_write telora_json_parse telora_toml_parse telora_yaml_parse
         telora_float_remainder telora_register_source telora_source_index telora_static_source_index telora_source_retained telora_collection_bootstrap telora_function_dependencies_bootstrap telora_initialization_stat telora_collect telora_heap_end telora_heap_bytes reset-service
         telora_reserve_static telora_source_range telora_content_write telora_content_slice telora_content_append telora_array_can_append telora_snapshot_export telora_snapshot_import telora_snapshot_runtime_export telora_service_metadata_publish telora_service_metadata_export telora_build_time_scope telora_build_time_active telora_program_root telora_program_entry telora_build_information_publish telora_build_information_export
         telora_data_image_export telora_data_image_import telora_dict_key_hash telora_column_map

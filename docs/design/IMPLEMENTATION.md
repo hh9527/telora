@@ -531,6 +531,8 @@ check 的初始化代码继续独立 demand，失败依赖读取缓存中的原�
 源码名与字节范围保留在 VM debug origins 和值来源中。fixture、eval/run 输入等来源
 由 Host 注册，物理文件定位不授予语言额外文件访问权限。
 
+宿主结构化输入使用 source=0 的临时 byte range，通过版本化 TLI1 包直接进入 Value 物化器，省去业务文本解析。对象键和值独立携带来源，普通 codec 和诊断沿用已有机制。run-service-located 与普通服务共享 handler、配额和请求重置；Host 合同见 [结构化输入](../../guide/LOCATED-INPUT.md)。运行时 ABI 为 43。
+
 ## 8. 资源与 Host 边界
 
 Wasmi 提供 fuel、内存增长与调用栈限制，Session 管理诊断和终止状态。静态类型求解不消耗
