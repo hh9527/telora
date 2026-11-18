@@ -395,8 +395,8 @@ async fn hover_definition_and_references_use_the_published_snapshot() {
     let hover = hover.expect("hover information");
     assert!(matches!(
         hover.contents,
-        lsp::HoverContents::Scalar(lsp::MarkedString::String(ref text))
-            if text.contains("value")
+        lsp::HoverContents::Scalar(lsp::MarkedString::LanguageString(ref item))
+            if item.language == "telora" && item.value.contains("decl value:")
     ));
     assert_eq!(hover.range.expect("hover range").start.line, 1);
 
@@ -613,7 +613,8 @@ async fn language_server_solves_types_without_evaluating_user_initializers() {
     )
     .unwrap();
     assert!(matches!(hover.unwrap().contents,
-            lsp::HoverContents::Scalar(lsp::MarkedString::String(ref text)) if text == "crash: Int"));
+            lsp::HoverContents::Scalar(lsp::MarkedString::LanguageString(ref item))
+                if item.language == "telora" && item.value == "decl crash: Int;"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -641,8 +642,8 @@ async fn hover_preserves_the_local_function_principal_signature() {
     assert!(
         matches!(
             hover.as_ref().expect("scheme hover").contents,
-            lsp::HoverContents::Scalar(lsp::MarkedString::String(ref text))
-                if text == "identity: for(A) Fn(A) -> A"
+            lsp::HoverContents::Scalar(lsp::MarkedString::LanguageString(ref item))
+                if item.language == "telora" && item.value == "decl identity: for(A) Fn(A) -> A;"
         ),
         "{hover:?}"
     );
@@ -677,8 +678,8 @@ pub def output: String = render(1);"#;
     .expect("hover result");
     assert!(matches!(
         hover.expect("bounded scheme hover").contents,
-        lsp::HoverContents::Scalar(lsp::MarkedString::String(ref text))
-            if text == "render: for(T: Display) Fn(T) -> String"
+        lsp::HoverContents::Scalar(lsp::MarkedString::LanguageString(ref item))
+            if item.language == "telora" && item.value == "decl render: for(T: Display) Fn(T) -> String;"
     ));
 }
 

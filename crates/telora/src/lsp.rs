@@ -223,16 +223,28 @@ async fn semantic_request(
                     other => fact_state_name(other).to_owned(),
                 })
             });
+        // 有定义时用合法的 telora 声明承载签名，编辑器才能按语法着色；
+        // 没有定义（纯表达式类型）时保持纯文本，避免编造名字。
         let contents = match (definition, ty) {
-            (Some(definition), Some(ty)) => Some(format!(
-                "{}: {ty}",
-                snapshot.mir.symbols[definition.index()].name
+            (Some(definition), Some(ty)) => Some(lsp::MarkedString::LanguageString(
+                lsp::LanguageString {
+                    language: "telora".to_owned(),
+                    value: format!(
+                        "decl {}: {ty};",
+                        snapshot.mir.symbols[definition.index()].name
+                    ),
+                },
             )),
-            (Some(definition), None) => Some(format!(
-                "{}: unknown",
-                snapshot.mir.symbols[definition.index()].name
+            (Some(definition), None) => Some(lsp::MarkedString::LanguageString(
+                lsp::LanguageString {
+                    language: "telora".to_owned(),
+                    value: format!(
+                        "decl {}: unknown;",
+                        snapshot.mir.symbols[definition.index()].name
+                    ),
+                },
             )),
-            (None, Some(ty)) => Some(ty),
+            (None, Some(ty)) => Some(lsp::MarkedString::String(ty)),
             (None, None) => None,
         };
         let hover_range = query
@@ -260,7 +272,7 @@ async fn semantic_request(
                     value,
                 })
             })
-            .or_else(|| contents.map(lsp::MarkedString::String));
+            .or_else(|| contents);
         let hover = contents.map(|contents| lsp::Hover {
             contents: lsp::HoverContents::Scalar(contents),
             range: hover_range.and_then(|range| to_lsp_range(&snapshot, range, encoding)),
